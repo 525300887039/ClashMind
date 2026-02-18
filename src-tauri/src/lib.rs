@@ -1,5 +1,6 @@
 mod cmd;
 mod core;
+mod tray;
 
 use std::sync::Mutex;
 
@@ -39,9 +40,12 @@ pub fn run() {
             cmd::system::close_connection,
             cmd::system::close_all_connections,
             cmd::system::get_connections,
+            cmd::system::set_system_proxy,
+            cmd::system::get_system_proxy,
         ])
         .setup(|app| {
             tracing_subscriber::fmt::init();
+            tray::create_tray(app.handle())?;
             core::logs::start_log_subscription(app.handle().clone());
             core::traffic::start_traffic_subscription(app.handle().clone());
             Ok(())

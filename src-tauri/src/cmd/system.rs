@@ -1,4 +1,5 @@
 use crate::core::mihomo::MihomoError;
+use crate::core::sysproxy::{self, SysproxyError};
 
 use super::MihomoState;
 
@@ -29,4 +30,19 @@ pub async fn get_connections(
     state: tauri::State<'_, MihomoState>,
 ) -> Result<serde_json::Value, MihomoError> {
     state.client.get_connections().await
+}
+
+#[tauri::command]
+pub fn set_system_proxy(enable: bool, port: u16) -> Result<(), SysproxyError> {
+    sysproxy::set_system_proxy(enable, "127.0.0.1", port)
+}
+
+#[tauri::command]
+pub fn get_system_proxy() -> Result<serde_json::Value, SysproxyError> {
+    let proxy = sysproxy::get_system_proxy()?;
+    Ok(serde_json::json!({
+        "enable": proxy.enable,
+        "host": proxy.host,
+        "port": proxy.port,
+    }))
 }
