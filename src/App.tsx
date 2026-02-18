@@ -3,6 +3,7 @@ import { queryClient } from "@/lib/query-client";
 import { AppLayout } from "@/components/layout/app-layout";
 import { useAppStore, type Page } from "@/stores/app-store";
 import { ProxyPage } from "@/features/proxy/proxy-page";
+import { ConnectionsPage } from "@/features/connections/connections-page";
 
 function PlaceholderPage({ name }: { name: string }) {
   return <div className="text-muted-foreground">{name}</div>;
@@ -10,7 +11,7 @@ function PlaceholderPage({ name }: { name: string }) {
 
 const PAGE_MAP: Record<Page, React.ReactNode> = {
   proxies: <ProxyPage />,
-  connections: <PlaceholderPage name="连接" />,
+  connections: <ConnectionsPage />,
   rules: <PlaceholderPage name="规则" />,
   logs: <PlaceholderPage name="日志" />,
   config: <PlaceholderPage name="配置" />,

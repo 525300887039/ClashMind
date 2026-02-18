@@ -27,6 +27,11 @@ Thumbs.db
 
 # Logs
 *.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Tauri
+src-tauri/gen/
 
 # Docs
 claude-code-skills-recommendation.md
