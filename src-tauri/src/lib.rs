@@ -40,6 +40,7 @@ pub fn run() {
         .setup(|app| {
             tracing_subscriber::fmt::init();
             core::logs::start_log_subscription(app.handle().clone());
+            core::traffic::start_traffic_subscription(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())

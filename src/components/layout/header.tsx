@@ -1,12 +1,20 @@
 import { Sun, Moon, Monitor, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useTheme } from "@/hooks/use-theme";
 import { useAppStore } from "@/stores/app-store";
+import { useTraffic } from "@/features/traffic/hooks/use-traffic";
 import { cn } from "@/lib/utils";
+
+function formatSpeed(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B/s`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB/s`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB/s`;
+}
 
 export function Header() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
+  const { up, down } = useTraffic();
 
   const cycleTheme = () => {
     const next = { light: "dark", dark: "system", system: "light" } as const;
@@ -28,8 +36,8 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-4 text-xs text-muted-foreground">
-        <span>↑ 0 B/s</span>
-        <span>↓ 0 B/s</span>
+        <span>↑ {formatSpeed(up)}</span>
+        <span>↓ {formatSpeed(down)}</span>
       </div>
 
       <button
