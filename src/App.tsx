@@ -6,6 +6,7 @@ import { ProxyPage } from "@/features/proxy/proxy-page";
 import { ConnectionsPage } from "@/features/connections/connections-page";
 import { RulesPage } from "@/features/rules/rules-page";
 import { LogsPage } from "@/features/logs/logs-page";
+import { ConfigPage } from "@/features/config/config-page";
 
 function PlaceholderPage({ name }: { name: string }) {
   return <div className="text-muted-foreground">{name}</div>;
@@ -16,7 +17,7 @@ const PAGE_MAP: Record<Page, React.ReactNode> = {
   connections: <ConnectionsPage />,
   rules: <RulesPage />,
   logs: <LogsPage />,
-  config: <PlaceholderPage name="配置" />,
+  config: <ConfigPage />,
   settings: <PlaceholderPage name="设置" />,
 };
 

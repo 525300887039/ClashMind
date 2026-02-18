@@ -193,4 +193,17 @@ impl MihomoClient {
         let resp = self.request(reqwest::Method::GET, "/version").send().await?;
         Ok(resp.json().await?)
     }
+
+    pub async fn reload_configs(&self) -> Result<(), MihomoError> {
+        let resp = self
+            .request(reqwest::Method::PUT, "/configs?force=true")
+            .json(&serde_json::json!({}))
+            .send()
+            .await?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            Err(MihomoError::Api(resp.text().await.unwrap_or_default()))
+        }
+    }
 }
