@@ -27,6 +27,7 @@ serde_yaml = "0.9"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"

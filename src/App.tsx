@@ -4,6 +4,8 @@ import { AppLayout } from "@/components/layout/app-layout";
 import { useAppStore, type Page } from "@/stores/app-store";
 import { ProxyPage } from "@/features/proxy/proxy-page";
 import { ConnectionsPage } from "@/features/connections/connections-page";
+import { RulesPage } from "@/features/rules/rules-page";
+import { LogsPage } from "@/features/logs/logs-page";
 
 function PlaceholderPage({ name }: { name: string }) {
   return <div className="text-muted-foreground">{name}</div>;
@@ -12,8 +14,8 @@ function PlaceholderPage({ name }: { name: string }) {
 const PAGE_MAP: Record<Page, React.ReactNode> = {
   proxies: <ProxyPage />,
   connections: <ConnectionsPage />,
-  rules: <PlaceholderPage name="规则" />,
-  logs: <PlaceholderPage name="日志" />,
+  rules: <RulesPage />,
+  logs: <LogsPage />,
   config: <PlaceholderPage name="配置" />,
   settings: <PlaceholderPage name="设置" />,
 };
