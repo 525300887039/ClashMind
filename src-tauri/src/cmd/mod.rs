@@ -6,5 +6,5 @@ pub mod sidecar;
 pub mod system;
 
 pub struct MihomoState {
-    pub client: MihomoClient,
+    pub client: tokio::sync::Mutex<MihomoClient>,
 }

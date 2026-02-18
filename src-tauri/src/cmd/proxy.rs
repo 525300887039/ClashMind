@@ -8,7 +8,7 @@ use super::MihomoState;
 pub async fn get_proxies(
     state: tauri::State<'_, MihomoState>,
 ) -> Result<serde_json::Value, MihomoError> {
-    state.client.get_proxies().await
+    state.client.lock().await.get_proxies().await
 }
 
 #[tauri::command]
@@ -17,7 +17,7 @@ pub async fn switch_proxy(
     group: String,
     name: String,
 ) -> Result<(), MihomoError> {
-    state.client.switch_proxy(&group, &name).await
+    state.client.lock().await.switch_proxy(&group, &name).await
 }
 
 #[tauri::command]
@@ -27,7 +27,7 @@ pub async fn test_delay(
     url: String,
     timeout: u32,
 ) -> Result<u32, MihomoError> {
-    state.client.test_delay(&name, &url, timeout).await
+    state.client.lock().await.test_delay(&name, &url, timeout).await
 }
 
 #[tauri::command]
@@ -37,12 +37,12 @@ pub async fn test_group_delay(
     url: String,
     timeout: u32,
 ) -> Result<HashMap<String, u32>, MihomoError> {
-    state.client.test_group_delay(&group, &url, timeout).await
+    state.client.lock().await.test_group_delay(&group, &url, timeout).await
 }
 
 #[tauri::command]
 pub async fn get_rules(
     state: tauri::State<'_, MihomoState>,
 ) -> Result<serde_json::Value, MihomoError> {
-    state.client.get_rules().await
+    state.client.lock().await.get_rules().await
 }

@@ -84,5 +84,7 @@ export const api = {
     setProxy: (enable: boolean, port: number) => invoke("set_system_proxy", { enable, port }),
     getProxy: () => invoke<{ enable: boolean; port: number }>("get_system_proxy"),
     getVersion: () => invoke<{ version: string }>("get_version"),
+    updateMihomoClient: (baseUrl: string, secret: string) =>
+      invoke("update_mihomo_client", { baseUrl, secret }),
   },
 } as const;

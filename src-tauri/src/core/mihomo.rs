@@ -73,6 +73,11 @@ impl MihomoClient {
         }
     }
 
+    pub fn update_connection(&mut self, base_url: &str, secret: &str) {
+        self.base_url = base_url.trim_end_matches('/').to_string();
+        self.secret = secret.to_string();
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
     }

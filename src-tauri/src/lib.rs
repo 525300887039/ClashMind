@@ -19,7 +19,7 @@ pub fn run() {
             child: Mutex::new(None),
         })
         .manage(MihomoState {
-            client: core::mihomo::MihomoClient::new("http://127.0.0.1:9090", ""),
+            client: tokio::sync::Mutex::new(core::mihomo::MihomoClient::new("http://127.0.0.1:9090", "")),
         })
         .invoke_handler(tauri::generate_handler![
             cmd::sidecar::start_mihomo,
@@ -42,6 +42,7 @@ pub fn run() {
             cmd::system::get_connections,
             cmd::system::set_system_proxy,
             cmd::system::get_system_proxy,
+            cmd::system::update_mihomo_client,
         ])
         .setup(|app| {
             tracing_subscriber::fmt::init();
