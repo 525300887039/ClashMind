@@ -4,6 +4,7 @@ node_modules/
 # Build output
 dist/
 ai-service/dist/
+*.tsbuildinfo
 
 # Rust
 src-tauri/target/

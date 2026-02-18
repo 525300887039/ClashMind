@@ -23,6 +23,19 @@
   --color-destructive: oklch(0.55 0.2 25);
   --color-success: oklch(0.6 0.18 145);
   --color-warning: oklch(0.7 0.15 80);
+
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+}
+
+@keyframes accordion-down {
+  from { height: 0; }
+  to { height: var(--radix-accordion-content-height); }
+}
+
+@keyframes accordion-up {
+  from { height: var(--radix-accordion-content-height); }
+  to { height: 0; }
 }
 
 .dark {
