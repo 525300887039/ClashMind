@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+ai-service/dist/
+
+# Rust
+src-tauri/target/
+
+# Environment
+.env
+.env.*
+
+# IDE
+.vscode/
+.claude/
+CLAUDE.md
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Docs
+claude-code-skills-recommendation.md
+mihomo-frontend-research.md
+DEVELOPMENT.md

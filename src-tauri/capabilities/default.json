@@ -1,0 +1,28 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "ClashMind default capabilities",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "process:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "args": true,
+          "name": "binaries/mihomo",
+          "sidecar": true
+        },
+        {
+          "args": true,
+          "name": "binaries/ai-service",
+          "sidecar": true
+        }
+      ]
+    },
+    "sql:default",
+    "notification:default"
+  ]
+}
