@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.clashmind.app",
   "build": {
+    "beforeBuildCommand": "pnpm build",
+    "beforeDevCommand": "pnpm dev",
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420"
   },
