@@ -4,6 +4,8 @@ mod tray;
 
 use std::sync::Mutex;
 
+use tauri::Manager;
+
 use cmd::MihomoState;
 use core::sidecar::SidecarState;
 
@@ -47,6 +49,18 @@ pub fn run() {
         .setup(|app| {
             tracing_subscriber::fmt::init();
             tray::create_tray(app.handle())?;
+
+            // Auto-start mihomo sidecar with default config dir
+            let sidecar_state = app.state::<SidecarState>();
+            let config_dir = dirs::home_dir()
+                .map(|h| h.join(".config").join("mihomo"))
+                .unwrap_or_else(|| std::path::PathBuf::from(".config/mihomo"));
+            let config_path = config_dir.to_string_lossy().to_string();
+            match core::sidecar::start(app.handle(), &sidecar_state, &config_path) {
+                Ok(()) => tracing::info!("mihomo sidecar 已自动启动, config_dir={config_path}"),
+                Err(e) => tracing::warn!("mihomo sidecar 自动启动失败: {e}"),
+            }
+
             core::logs::start_log_subscription(app.handle().clone());
             core::traffic::start_traffic_subscription(app.handle().clone());
             Ok(())
