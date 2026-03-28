@@ -7,7 +7,6 @@ import { ConfigEditor } from "./config-editor";
 
 export function ConfigPage() {
   const configDir = useAppStore((s) => s.mihomoConfigDir);
-  const apiAddress = useAppStore((s) => s.apiAddress);
   const configPath = `${configDir}/config.yaml`;
 
   const { data: savedContent, isLoading, error } = useReadConfig(configPath);
@@ -32,7 +31,7 @@ export function ConfigPage() {
   const handleSave = async () => {
     try {
       await writeMut.mutateAsync({ path: configPath, content });
-      await reloadMut.mutateAsync(apiAddress);
+      await reloadMut.mutateAsync();
       setDirty(false);
       toast.success("配置已保存并重载");
     } catch (err) {

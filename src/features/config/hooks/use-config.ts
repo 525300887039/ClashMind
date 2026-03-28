@@ -23,6 +23,6 @@ export function useWriteConfig() {
 
 export function useReloadConfig() {
   return useMutation({
-    mutationFn: (mihomoUrl: string) => api.config.reload(mihomoUrl),
+    mutationFn: () => api.config.reload(),
   });
 }

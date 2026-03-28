@@ -1,7 +1,7 @@
 use futures_util::StreamExt;
 use tauri::{AppHandle, Emitter};
 use tokio_tungstenite::connect_async;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Clone, serde::Serialize)]
 struct TrafficPayload {
@@ -44,7 +44,7 @@ pub fn start_traffic_subscription(app: AppHandle) {
                     }
                 }
                 Err(e) => {
-                    error!("流量 WebSocket 连接失败: {e}");
+                    warn!("流量 WebSocket 连接失败: {e}");
                 }
             }
 

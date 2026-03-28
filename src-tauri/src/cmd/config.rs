@@ -23,8 +23,8 @@ impl Serialize for ConfigError {
 
 fn expand_tilde(path: &str) -> String {
     if let Some(rest) = path.strip_prefix('~') {
-        if let Ok(home) = std::env::var("HOME") {
-            return format!("{home}{rest}");
+        if let Some(home) = dirs::home_dir() {
+            return format!("{}{rest}", home.display());
         }
     }
     path.to_string()
@@ -43,9 +43,10 @@ pub async fn write_config(path: String, content: String) -> Result<(), ConfigErr
 }
 
 #[tauri::command]
-pub async fn reload_config(mihomo_url: String) -> Result<(), ConfigError> {
-    let client = crate::core::mihomo::MihomoClient::new(&format!("http://{mihomo_url}"), "");
-    Ok(client.reload_configs().await?)
+pub async fn reload_config(
+    state: tauri::State<'_, MihomoState>,
+) -> Result<(), ConfigError> {
+    Ok(state.client.lock().await.reload_configs().await?)
 }
 
 #[tauri::command]

@@ -76,7 +76,7 @@ export const api = {
   config: {
     read: (path: string) => invoke<string>("read_config", { path }),
     write: (path: string, content: string) => invoke("write_config", { path, content }),
-    reload: (mihomoUrl: string) => invoke("reload_config", { mihomoUrl }),
+    reload: () => invoke("reload_config"),
     get: () => invoke<Record<string, unknown>>("get_configs"),
     patch: (payload: Record<string, unknown>) => invoke("patch_configs", { payload }),
   },

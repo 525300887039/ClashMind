@@ -1,7 +1,7 @@
 use futures_util::StreamExt;
 use tauri::{AppHandle, Emitter};
 use tokio_tungstenite::connect_async;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Clone, serde::Serialize)]
 struct LogPayload {
@@ -43,7 +43,7 @@ pub fn start_log_subscription(app: AppHandle) {
                     }
                 }
                 Err(e) => {
-                    error!("日志 WebSocket 连接失败: {e}");
+                    warn!("日志 WebSocket 连接失败: {e}");
                 }
             }
 
