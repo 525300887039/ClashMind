@@ -50,14 +50,9 @@ jobs:
             librsvg2-dev \
             patchelf
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: latest
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -102,10 +97,10 @@ jobs:
           ls -la src-tauri/binaries/
 
       - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Build Tauri app
-        run: pnpm tauri build
+        run: npx tauri build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
