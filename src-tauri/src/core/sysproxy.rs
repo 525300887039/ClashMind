@@ -31,9 +31,9 @@ pub fn set_system_proxy(enable: bool, host: &str, port: u16) -> Result<(), Syspr
     } else {
         let proxy = Sysproxy {
             enable: false,
-            host: String::new(),
-            port: 0,
-            bypass: String::new(),
+            host: host.into(),
+            port,
+            bypass: "localhost,127.0.0.1".into(),
         };
         proxy.set_system_proxy().map_err(|e| SysproxyError::SetFailed(e.to_string()))
     }
