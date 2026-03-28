@@ -55,6 +55,25 @@ pub fn run() {
             let config_dir = dirs::home_dir()
                 .map(|h| h.join(".config").join("mihomo"))
                 .unwrap_or_else(|| std::path::PathBuf::from(".config/mihomo"));
+            if !config_dir.exists() {
+                std::fs::create_dir_all(&config_dir).ok();
+            }
+            // Ensure config.yaml has external-controller so the API is reachable
+            let config_file = config_dir.join("config.yaml");
+            let needs_default = if config_file.exists() {
+                let content = std::fs::read_to_string(&config_file).unwrap_or_default();
+                !content.contains("external-controller")
+            } else {
+                true
+            };
+            if needs_default {
+                let default_config = "\
+mixed-port: 7890\n\
+external-controller: 127.0.0.1:9090\n\
+";
+                std::fs::write(&config_file, default_config).ok();
+                tracing::info!("已写入默认 mihomo 配置: {}", config_file.display());
+            }
             let config_path = config_dir.to_string_lossy().to_string();
             match core::sidecar::start(app.handle(), &sidecar_state, &config_path) {
                 Ok(()) => tracing::info!("mihomo sidecar 已自动启动, config_dir={config_path}"),
