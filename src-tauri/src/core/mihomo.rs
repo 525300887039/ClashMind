@@ -97,7 +97,7 @@ impl MihomoClient {
 
     pub async fn switch_proxy(&self, group: &str, name: &str) -> Result<(), MihomoError> {
         let resp = self
-            .request(reqwest::Method::PUT, &format!("/proxies/{}", group))
+            .request(reqwest::Method::PUT, &format!("/proxies/{}", urlencoding::encode(group)))
             .json(&serde_json::json!({ "name": name }))
             .send()
             .await?;
@@ -117,7 +117,7 @@ impl MihomoClient {
         let resp = self
             .request(
                 reqwest::Method::GET,
-                &format!("/proxies/{}/delay", name),
+                &format!("/proxies/{}/delay", urlencoding::encode(name)),
             )
             .query(&[("url", url), ("timeout", &timeout.to_string())])
             .send()
@@ -138,7 +138,7 @@ impl MihomoClient {
         let resp = self
             .request(
                 reqwest::Method::GET,
-                &format!("/group/{}/delay", group),
+                &format!("/group/{}/delay", urlencoding::encode(group)),
             )
             .query(&[("url", url), ("timeout", &timeout.to_string())])
             .send()
@@ -173,7 +173,7 @@ impl MihomoClient {
     }
 
     pub async fn close_connection(&self, id: &str) -> Result<(), MihomoError> {
-        self.request(reqwest::Method::DELETE, &format!("/connections/{}", id))
+        self.request(reqwest::Method::DELETE, &format!("/connections/{}", urlencoding::encode(id)))
             .send()
             .await?;
         Ok(())
