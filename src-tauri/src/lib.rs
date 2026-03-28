@@ -84,6 +84,15 @@ external-controller: 127.0.0.1:9090\n\
             core::traffic::start_traffic_subscription(app.handle().clone());
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                let sidecar_state = app.state::<SidecarState>();
+                match core::sidecar::stop(&sidecar_state) {
+                    Ok(()) => tracing::info!("mihomo sidecar 已在退出时停止"),
+                    Err(e) => tracing::warn!("退出时停止 mihomo 失败: {e}"),
+                }
+            }
+        });
 }
