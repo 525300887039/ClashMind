@@ -29,6 +29,8 @@ impl Serialize for SidecarError {
 
 pub struct SidecarState {
     pub child: Mutex<Option<CommandChild>>,
+    pub log_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    pub traffic_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 pub fn start(app: &AppHandle, state: &SidecarState, config_path: &str) -> Result<(), SidecarError> {

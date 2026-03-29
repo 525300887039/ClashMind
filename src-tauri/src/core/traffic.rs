@@ -9,7 +9,7 @@ struct TrafficPayload {
     down: u64,
 }
 
-pub fn start_traffic_subscription(app: AppHandle) {
+pub fn start_traffic_subscription(app: AppHandle) -> tauri::async_runtime::JoinHandle<()> {
     tauri::async_runtime::spawn(async move {
         let mut retry_delay = std::time::Duration::from_secs(1);
         let max_delay = std::time::Duration::from_secs(30);
@@ -51,5 +51,5 @@ pub fn start_traffic_subscription(app: AppHandle) {
             tokio::time::sleep(retry_delay).await;
             retry_delay = (retry_delay * 2).min(max_delay);
         }
-    });
+    })
 }

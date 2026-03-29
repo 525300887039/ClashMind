@@ -19,6 +19,8 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(SidecarState {
             child: Mutex::new(None),
+            log_task: Mutex::new(None),
+            traffic_task: Mutex::new(None),
         })
         .manage(MihomoState {
             client: tokio::sync::Mutex::new(core::mihomo::MihomoClient::new("http://127.0.0.1:9090", "")),
