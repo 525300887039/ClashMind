@@ -56,6 +56,8 @@ export const api = {
     stop: () => invoke("stop_mihomo"),
     restart: (configPath: string) => invoke("restart_mihomo", { configPath }),
     status: () => invoke<boolean>("get_mihomo_status"),
+    checkConfig: (configPath: string) => invoke<boolean>("check_config_exists", { configPath }),
+    ensureDefaultConfig: (configPath: string) => invoke("ensure_default_config", { configPath }),
   },
   proxy: {
     getAll: () => invoke<ProxiesResponse>("get_proxies"),

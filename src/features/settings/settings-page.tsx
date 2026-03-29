@@ -12,9 +12,6 @@ export function SettingsPage() {
   const [apiAddress, setApiAddress] = useState(store.apiAddress);
   const [apiSecret, setApiSecret] = useState(store.apiSecret);
   const [httpPort, setHttpPort] = useState(store.httpPort);
-  const [socksPort, setSocksPort] = useState(store.socksPort);
-  const [autoStart, setAutoStart] = useState(store.autoStart);
-  const [language, setLanguage] = useState(store.language);
   const [theme, setTheme] = useState<Theme>(store.theme);
   const [saving, setSaving] = useState(false);
 
@@ -29,9 +26,6 @@ export function SettingsPage() {
         apiAddress,
         apiSecret,
         httpPort,
-        socksPort,
-        autoStart,
-        language,
       });
       store.setTheme(theme);
 
@@ -94,46 +88,6 @@ export function SettingsPage() {
               value={httpPort}
               onChange={(e) => setHttpPort(Number(e.target.value))}
             />
-          </Row>
-
-          <Row label="SOCKS 端口">
-            <input
-              type="number"
-              className={inputClass}
-              value={socksPort}
-              onChange={(e) => setSocksPort(Number(e.target.value))}
-            />
-          </Row>
-
-          <Row label="开机自启">
-            <button
-              type="button"
-              onClick={() => setAutoStart(!autoStart)}
-              className={cn(
-                "relative h-6 w-11 rounded-full transition-colors",
-                autoStart ? "bg-primary" : "bg-muted",
-              )}
-            >
-              <span
-                className={cn(
-                  "absolute top-0.5 left-0.5 block h-5 w-5 rounded-full bg-white transition-transform",
-                  autoStart && "translate-x-5",
-                )}
-              />
-            </button>
-          </Row>
-
-          <Row label="语言">
-            <select
-              className={selectClass}
-              value={language}
-              onChange={(e) =>
-                setLanguage(e.target.value as "zh-CN" | "en-US")
-              }
-            >
-              <option value="zh-CN">中文</option>
-              <option value="en-US">English</option>
-            </select>
           </Row>
 
           <Row label="主题">

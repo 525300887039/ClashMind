@@ -28,6 +28,8 @@ pub fn run() {
             cmd::sidecar::stop_mihomo,
             cmd::sidecar::restart_mihomo,
             cmd::sidecar::get_mihomo_status,
+            cmd::sidecar::check_config_exists,
+            cmd::sidecar::ensure_default_config,
             cmd::proxy::get_proxies,
             cmd::proxy::switch_proxy,
             cmd::proxy::test_delay,
@@ -49,39 +51,6 @@ pub fn run() {
         .setup(|app| {
             tracing_subscriber::fmt::init();
             tray::create_tray(app.handle())?;
-
-            // Auto-start mihomo sidecar with default config dir
-            let sidecar_state = app.state::<SidecarState>();
-            let config_dir = dirs::home_dir()
-                .map(|h| h.join(".config").join("mihomo"))
-                .unwrap_or_else(|| std::path::PathBuf::from(".config/mihomo"));
-            if !config_dir.exists() {
-                std::fs::create_dir_all(&config_dir).ok();
-            }
-            // Ensure config.yaml has external-controller so the API is reachable
-            let config_file = config_dir.join("config.yaml");
-            let needs_default = if config_file.exists() {
-                let content = std::fs::read_to_string(&config_file).unwrap_or_default();
-                !content.contains("external-controller")
-            } else {
-                true
-            };
-            if needs_default {
-                let default_config = "\
-mixed-port: 7890\n\
-external-controller: 127.0.0.1:9090\n\
-";
-                std::fs::write(&config_file, default_config).ok();
-                tracing::info!("已写入默认 mihomo 配置: {}", config_file.display());
-            }
-            let config_path = config_dir.to_string_lossy().to_string();
-            match core::sidecar::start(app.handle(), &sidecar_state, &config_path) {
-                Ok(()) => tracing::info!("mihomo sidecar 已自动启动, config_dir={config_path}"),
-                Err(e) => tracing::warn!("mihomo sidecar 自动启动失败: {e}"),
-            }
-
-            core::logs::start_log_subscription(app.handle().clone());
-            core::traffic::start_traffic_subscription(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())
