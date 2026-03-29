@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.clashmind.app",
   "build": {
-    "beforeBuildCommand": "npm run build",
-    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "pnpm build",
+    "beforeDevCommand": "pnpm dev",
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420"
   },
@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; img-src 'self' asset: http://asset.localhost; connect-src ipc: http://ipc.localhost http://127.0.0.1:* ws://127.0.0.1:*"
     }
   },
   "bundle": {

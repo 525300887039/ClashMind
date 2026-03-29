@@ -1,9 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { Save, RotateCw } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { useAppStore } from "@/stores/app-store";
 import { useReadConfig, useWriteConfig, useReloadConfig } from "./hooks/use-config";
-import { ConfigEditor } from "./config-editor";
+
+const ConfigEditor = lazy(() =>
+  import("./config-editor").then((m) => ({ default: m.ConfigEditor }))
+);
 
 export function ConfigPage() {
   const configDir = useAppStore((s) => s.mihomoConfigDir);
@@ -68,7 +71,9 @@ export function ConfigPage() {
         </button>
       </div>
       <div className="flex-1">
-        <ConfigEditor value={content} onChange={handleChange} />
+        <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">编辑器加载中...</div>}>
+          <ConfigEditor value={content} onChange={handleChange} />
+        </Suspense>
       </div>
     </div>
   );

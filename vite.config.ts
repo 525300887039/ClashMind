@@ -19,4 +19,13 @@ export default defineConfig({
     host: host || false,
     hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "monaco-editor": ["monaco-editor"],
+        },
+      },
+    },
+  },
 });
