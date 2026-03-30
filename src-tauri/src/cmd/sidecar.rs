@@ -3,13 +3,19 @@ use tauri::AppHandle;
 use crate::core::sidecar::{self, SidecarError, SidecarState};
 
 /// Abort old log/traffic tasks and start fresh subscriptions.
+/// Each mutex is locked only once: abort the old handle and store the new one
+/// under the same guard to avoid a race window between release and re-acquire.
 fn restart_subscriptions(app: AppHandle, state: &SidecarState) -> Result<(), SidecarError> {
-    sidecar::abort_subscriptions(state);
-
     let mut log_guard = state.log_task.lock().map_err(|e| SidecarError::SpawnFailed(e.to_string()))?;
+    if let Some(h) = log_guard.take() {
+        h.abort();
+    }
     *log_guard = Some(crate::core::logs::start_log_subscription(app.clone()));
 
     let mut traffic_guard = state.traffic_task.lock().map_err(|e| SidecarError::SpawnFailed(e.to_string()))?;
+    if let Some(h) = traffic_guard.take() {
+        h.abort();
+    }
     *traffic_guard = Some(crate::core::traffic::start_traffic_subscription(app));
 
     Ok(())
