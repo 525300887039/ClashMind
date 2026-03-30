@@ -5,7 +5,7 @@ use serde::Deserialize;
 use tauri::{Listener, Manager, WebviewWindow};
 use tokio::sync::{oneshot, watch};
 
-use crate::collector::{ws_client, CollectorError, CollectorState};
+use crate::collector::{ws_client, CollectorError, CollectorShutdown, CollectorState};
 
 const APP_STORE_KEY: &str = "clashmind-store";
 const APP_STORE_READ_TIMEOUT: Duration = Duration::from_secs(2);
@@ -36,10 +36,18 @@ pub async fn start_collector(
         }
     };
 
-    let (cancel_tx, cancel_rx) = watch::channel(false);
+    let (cancel_tx, cancel_rx) = watch::channel(CollectorShutdown::Run);
     let (done_tx, done_rx) = watch::channel(false);
+    let app_handle = window.app_handle().clone();
     let task = tauri::async_runtime::spawn(async move {
-        ws_client::run_connections_collector(api_address, api_secret, cancel_rx, done_tx).await;
+        ws_client::run_connections_collector(
+            app_handle,
+            api_address,
+            api_secret,
+            cancel_rx,
+            done_tx,
+        )
+        .await;
     });
 
     if let Err(error) = state.start_runtime(cancel_tx, done_rx, task) {
@@ -55,7 +63,7 @@ pub async fn start_collector(
 pub async fn stop_collector(state: tauri::State<'_, CollectorState>) -> Result<(), CollectorError> {
     let _operation_guard = state.lock_operation().await;
     state.cleanup_finished().await?;
-    state.stop_runtime().await?;
+    state.stop_runtime(CollectorShutdown::Stop).await?;
     tracing::info!("collector 已停止");
     Ok(())
 }

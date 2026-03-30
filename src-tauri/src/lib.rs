@@ -4,13 +4,21 @@ mod core;
 mod db;
 mod tray;
 
-use std::sync::Mutex;
+use std::{future::Future, sync::Mutex};
 
 use tauri::Manager;
 
 use cmd::MihomoState;
-use collector::CollectorState;
+use collector::{CollectorError, CollectorShutdown, CollectorState};
 use core::sidecar::SidecarState;
+
+fn block_on<F: Future>(future: F) -> F::Output {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(future))
+    } else {
+        tauri::async_runtime::block_on(future)
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -73,10 +81,23 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            if let tauri::RunEvent::Exit = event {
-                let collector_state = app.state::<CollectorState>();
-                if let Err(error) = collector_state.request_stop() {
-                    tracing::warn!("退出时停止 collector 失败: {error}");
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                let collector_result = block_on(async {
+                    let collector_state = app.state::<CollectorState>();
+                    let _operation_guard = collector_state.lock_operation().await;
+                    collector_state.cleanup_finished().await?;
+
+                    match collector_state
+                        .stop_runtime(CollectorShutdown::StopAndCloseActive)
+                        .await
+                    {
+                        Ok(()) | Err(CollectorError::NotRunning) => Ok(()),
+                        Err(error) => Err(error),
+                    }
+                });
+
+                if let Err(error) = collector_result {
+                    tracing::warn!("退出时等待 collector flush 失败: {error}");
                 }
 
                 let sidecar_state = app.state::<SidecarState>();

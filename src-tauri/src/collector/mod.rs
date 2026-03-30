@@ -1,5 +1,6 @@
 //! Collector lifecycle state and WebSocket client entry points.
 
+pub mod buffer;
 pub mod ws_client;
 
 use std::sync::{
@@ -12,9 +13,29 @@ use tauri::async_runtime::JoinHandle;
 use thiserror::Error;
 use tokio::sync::watch;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum CollectorShutdown {
+    #[default]
+    Run,
+    Stop,
+    StopAndCloseActive,
+}
+
+impl CollectorShutdown {
+    #[must_use]
+    pub(crate) fn should_stop(self) -> bool {
+        !matches!(self, Self::Run)
+    }
+
+    #[must_use]
+    pub(crate) fn should_close_active(self) -> bool {
+        matches!(self, Self::StopAndCloseActive)
+    }
+}
+
 #[derive(Debug)]
 struct CollectorRuntime {
-    cancel_tx: watch::Sender<bool>,
+    cancel_tx: watch::Sender<CollectorShutdown>,
     done_rx: watch::Receiver<bool>,
     task: JoinHandle<()>,
 }
@@ -89,7 +110,7 @@ impl CollectorState {
 
     pub(crate) fn start_runtime(
         &self,
-        cancel_tx: watch::Sender<bool>,
+        cancel_tx: watch::Sender<CollectorShutdown>,
         done_rx: watch::Receiver<bool>,
         task: JoinHandle<()>,
     ) -> Result<(), CollectorError> {
@@ -126,7 +147,10 @@ impl CollectorState {
         Ok(())
     }
 
-    pub(crate) async fn stop_runtime(&self) -> Result<(), CollectorError> {
+    pub(crate) async fn stop_runtime(
+        &self,
+        shutdown: CollectorShutdown,
+    ) -> Result<(), CollectorError> {
         let mut done_rx = {
             let mut guard = self
                 .lifecycle
@@ -136,7 +160,13 @@ impl CollectorState {
             let current = std::mem::take(&mut *guard);
             match current {
                 CollectorLifecycle::Running(runtime) => {
-                    let _ = runtime.cancel_tx.send(true);
+                    let _ = runtime.cancel_tx.send(shutdown);
+                    let done_rx = runtime.done_rx.clone();
+                    *guard = CollectorLifecycle::Stopping(runtime);
+                    done_rx
+                }
+                CollectorLifecycle::Stopping(runtime) => {
+                    let _ = runtime.cancel_tx.send(shutdown);
                     let done_rx = runtime.done_rx.clone();
                     *guard = CollectorLifecycle::Stopping(runtime);
                     done_rx
@@ -153,28 +183,6 @@ impl CollectorState {
         }
 
         self.cleanup_finished().await?;
-        Ok(())
-    }
-
-    pub(crate) fn request_stop(&self) -> Result<(), CollectorError> {
-        let cancel_tx = {
-            let guard = self
-                .lifecycle
-                .lock()
-                .map_err(|error| CollectorError::StateLock(error.to_string()))?;
-
-            match &*guard {
-                CollectorLifecycle::Running(runtime) | CollectorLifecycle::Stopping(runtime) => {
-                    Some(runtime.cancel_tx.clone())
-                }
-                CollectorLifecycle::Idle | CollectorLifecycle::Starting => None,
-            }
-        };
-
-        if let Some(cancel_tx) = cancel_tx {
-            let _ = cancel_tx.send(true);
-        }
-
         Ok(())
     }
 
@@ -275,7 +283,7 @@ mod tests {
 
         assert!(state.begin_start().is_ok());
 
-        let (cancel_tx, mut cancel_rx) = watch::channel(false);
+        let (cancel_tx, mut cancel_rx) = watch::channel(CollectorShutdown::Run);
         let (done_tx, done_rx) = watch::channel(false);
         let task = tauri::async_runtime::spawn(async move {
             let _ = cancel_rx.changed().await;
@@ -286,7 +294,8 @@ mod tests {
         assert!(state.start_runtime(cancel_tx, done_rx, task).is_ok());
 
         let stop_state = Arc::clone(&state);
-        let stop_task = tokio::spawn(async move { stop_state.stop_runtime().await });
+        let stop_task =
+            tokio::spawn(async move { stop_state.stop_runtime(CollectorShutdown::Stop).await });
 
         tokio::time::sleep(Duration::from_millis(5)).await;
         assert!(matches!(
@@ -302,5 +311,15 @@ mod tests {
 
         assert!(!state.is_running());
         assert!(state.begin_start().is_ok());
+    }
+
+    #[test]
+    fn shutdown_signal_flags_close_active_only_for_app_exit() {
+        assert!(!CollectorShutdown::Run.should_stop());
+        assert!(!CollectorShutdown::Run.should_close_active());
+        assert!(CollectorShutdown::Stop.should_stop());
+        assert!(!CollectorShutdown::Stop.should_close_active());
+        assert!(CollectorShutdown::StopAndCloseActive.should_stop());
+        assert!(CollectorShutdown::StopAndCloseActive.should_close_active());
     }
 }
