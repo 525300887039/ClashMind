@@ -15,14 +15,25 @@ use tokio::sync::watch;
 #[derive(Debug)]
 struct CollectorRuntime {
     cancel_tx: watch::Sender<bool>,
+    done_rx: watch::Receiver<bool>,
     task: JoinHandle<()>,
+}
+
+#[derive(Debug, Default)]
+enum CollectorLifecycle {
+    #[default]
+    Idle,
+    Starting,
+    Running(CollectorRuntime),
+    Stopping(CollectorRuntime),
 }
 
 /// Shared lifecycle state for the connection collector service.
 #[derive(Debug)]
 pub struct CollectorState {
     running: Arc<AtomicBool>,
-    runtime: Mutex<Option<CollectorRuntime>>,
+    operation: tokio::sync::Mutex<()>,
+    lifecycle: Mutex<CollectorLifecycle>,
 }
 
 impl CollectorState {
@@ -31,7 +42,8 @@ impl CollectorState {
     pub fn new() -> Self {
         Self {
             running: Arc::new(AtomicBool::new(false)),
-            runtime: Mutex::new(None),
+            operation: tokio::sync::Mutex::new(()),
+            lifecycle: Mutex::new(CollectorLifecycle::Idle),
         }
     }
 
@@ -41,51 +53,69 @@ impl CollectorState {
         self.running.load(Ordering::SeqCst)
     }
 
-    /// Returns a clone of the shared running flag for background tasks.
-    #[must_use]
-    pub fn running_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.running)
+    pub(crate) async fn lock_operation(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.operation.lock().await
+    }
+
+    pub(crate) fn begin_start(&self) -> Result<(), CollectorError> {
+        let mut guard = self
+            .lifecycle
+            .lock()
+            .map_err(|error| CollectorError::StateLock(error.to_string()))?;
+
+        match &*guard {
+            CollectorLifecycle::Idle => {
+                *guard = CollectorLifecycle::Starting;
+                Ok(())
+            }
+            CollectorLifecycle::Starting
+            | CollectorLifecycle::Running(_)
+            | CollectorLifecycle::Stopping(_) => Err(CollectorError::AlreadyRunning),
+        }
+    }
+
+    pub(crate) fn abort_start(&self) -> Result<(), CollectorError> {
+        let mut guard = self
+            .lifecycle
+            .lock()
+            .map_err(|error| CollectorError::StateLock(error.to_string()))?;
+
+        if matches!(&*guard, CollectorLifecycle::Starting) {
+            *guard = CollectorLifecycle::Idle;
+        }
+
+        Ok(())
     }
 
     pub(crate) fn start_runtime(
         &self,
         cancel_tx: watch::Sender<bool>,
+        done_rx: watch::Receiver<bool>,
         task: JoinHandle<()>,
     ) -> Result<(), CollectorError> {
         let mut guard = self
-            .runtime
+            .lifecycle
             .lock()
             .map_err(|error| CollectorError::StateLock(error.to_string()))?;
 
-        if guard.is_some() || self.is_running() {
-            return Err(CollectorError::AlreadyRunning);
+        match &*guard {
+            CollectorLifecycle::Starting => {
+                self.running.store(true, Ordering::SeqCst);
+                *guard = CollectorLifecycle::Running(CollectorRuntime {
+                    cancel_tx,
+                    done_rx,
+                    task,
+                });
+                Ok(())
+            }
+            _ => Err(CollectorError::StateTransition(
+                "collector 未处于可启动状态".into(),
+            )),
         }
-
-        self.running.store(true, Ordering::SeqCst);
-        *guard = Some(CollectorRuntime { cancel_tx, task });
-        Ok(())
     }
 
     pub(crate) async fn cleanup_finished(&self) -> Result<(), CollectorError> {
-        let runtime = {
-            let mut guard = self
-                .runtime
-                .lock()
-                .map_err(|error| CollectorError::StateLock(error.to_string()))?;
-
-            let should_cleanup = guard
-                .as_ref()
-                .map(|runtime| runtime.task.inner().is_finished())
-                .unwrap_or(false);
-
-            if should_cleanup {
-                guard.take()
-            } else {
-                None
-            }
-        };
-
-        if let Some(runtime) = runtime {
+        if let Some(runtime) = self.take_finished_runtime()? {
             self.running.store(false, Ordering::SeqCst);
             runtime
                 .task
@@ -97,32 +127,48 @@ impl CollectorState {
     }
 
     pub(crate) async fn stop_runtime(&self) -> Result<(), CollectorError> {
-        let runtime = {
+        let mut done_rx = {
             let mut guard = self
-                .runtime
+                .lifecycle
                 .lock()
                 .map_err(|error| CollectorError::StateLock(error.to_string()))?;
 
-            guard.take().ok_or(CollectorError::NotRunning)?
+            let current = std::mem::take(&mut *guard);
+            match current {
+                CollectorLifecycle::Running(runtime) => {
+                    let _ = runtime.cancel_tx.send(true);
+                    let done_rx = runtime.done_rx.clone();
+                    *guard = CollectorLifecycle::Stopping(runtime);
+                    done_rx
+                }
+                other => {
+                    *guard = other;
+                    return Err(CollectorError::NotRunning);
+                }
+            }
         };
 
-        let _ = runtime.cancel_tx.send(true);
-        self.running.store(false, Ordering::SeqCst);
-        runtime
-            .task
-            .await
-            .map_err(|error| CollectorError::TaskJoin(error.to_string()))?;
+        if !*done_rx.borrow() {
+            let _ = done_rx.changed().await;
+        }
+
+        self.cleanup_finished().await?;
         Ok(())
     }
 
     pub(crate) fn request_stop(&self) -> Result<(), CollectorError> {
         let cancel_tx = {
             let guard = self
-                .runtime
+                .lifecycle
                 .lock()
                 .map_err(|error| CollectorError::StateLock(error.to_string()))?;
 
-            guard.as_ref().map(|runtime| runtime.cancel_tx.clone())
+            match &*guard {
+                CollectorLifecycle::Running(runtime) | CollectorLifecycle::Stopping(runtime) => {
+                    Some(runtime.cancel_tx.clone())
+                }
+                CollectorLifecycle::Idle | CollectorLifecycle::Starting => None,
+            }
         };
 
         if let Some(cancel_tx) = cancel_tx {
@@ -130,6 +176,35 @@ impl CollectorState {
         }
 
         Ok(())
+    }
+
+    fn take_finished_runtime(&self) -> Result<Option<CollectorRuntime>, CollectorError> {
+        let mut guard = self
+            .lifecycle
+            .lock()
+            .map_err(|error| CollectorError::StateLock(error.to_string()))?;
+
+        let current = std::mem::take(&mut *guard);
+        let runtime = match current {
+            CollectorLifecycle::Running(runtime) if runtime.is_finished() => Some(runtime),
+            CollectorLifecycle::Stopping(runtime) if runtime.is_finished() => Some(runtime),
+            other => {
+                *guard = other;
+                None
+            }
+        };
+
+        if runtime.is_none() && matches!(&*guard, CollectorLifecycle::Idle) {
+            *guard = CollectorLifecycle::Idle;
+        }
+
+        Ok(runtime)
+    }
+}
+
+impl CollectorRuntime {
+    fn is_finished(&self) -> bool {
+        *self.done_rx.borrow() || self.task.inner().is_finished()
     }
 }
 
@@ -148,6 +223,8 @@ pub enum CollectorError {
     NotRunning,
     #[error("采集状态锁失败: {0}")]
     StateLock(String),
+    #[error("采集状态转换失败: {0}")]
+    StateTransition(String),
     #[error("构建 WebSocket 地址失败: {0}")]
     InvalidApiAddress(String),
     #[error("解析连接快照失败: {0}")]
@@ -170,5 +247,60 @@ impl Serialize for CollectorError {
         S: serde::Serializer,
     {
         serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use super::*;
+
+    #[test]
+    fn begin_start_rejects_duplicate_start_attempts() {
+        let state = CollectorState::new();
+
+        assert!(state.begin_start().is_ok());
+        assert!(matches!(
+            state.begin_start(),
+            Err(CollectorError::AlreadyRunning)
+        ));
+        assert!(state.abort_start().is_ok());
+        assert!(state.begin_start().is_ok());
+    }
+
+    #[tokio::test]
+    async fn stop_runtime_keeps_lifecycle_busy_until_task_finishes() {
+        let state = Arc::new(CollectorState::new());
+
+        assert!(state.begin_start().is_ok());
+
+        let (cancel_tx, mut cancel_rx) = watch::channel(false);
+        let (done_tx, done_rx) = watch::channel(false);
+        let task = tauri::async_runtime::spawn(async move {
+            let _ = cancel_rx.changed().await;
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let _ = done_tx.send(true);
+        });
+
+        assert!(state.start_runtime(cancel_tx, done_rx, task).is_ok());
+
+        let stop_state = Arc::clone(&state);
+        let stop_task = tokio::spawn(async move { stop_state.stop_runtime().await });
+
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert!(matches!(
+            state.begin_start(),
+            Err(CollectorError::AlreadyRunning)
+        ));
+
+        let stop_result = stop_task.await;
+        assert!(stop_result.is_ok());
+        if let Ok(result) = stop_result {
+            assert!(result.is_ok());
+        }
+
+        assert!(!state.is_running());
+        assert!(state.begin_start().is_ok());
     }
 }

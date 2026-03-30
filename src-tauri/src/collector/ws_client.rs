@@ -1,11 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::{collections::HashMap, time::Duration};
 
 use chrono::Utc;
 use futures_util::StreamExt;
@@ -135,8 +128,8 @@ impl SnapshotDiff {
 pub async fn run_connections_collector(
     api_address: String,
     api_secret: String,
-    running: Arc<AtomicBool>,
     mut shutdown_rx: watch::Receiver<bool>,
+    done_tx: watch::Sender<bool>,
 ) {
     let mut previous_connections = HashMap::new();
     let mut retry_delay = INITIAL_RETRY_DELAY;
@@ -192,7 +185,7 @@ pub async fn run_connections_collector(
         retry_delay = next_retry_delay(retry_delay);
     }
 
-    running.store(false, Ordering::SeqCst);
+    let _ = done_tx.send(true);
     info!("collector 已停止");
 }
 
