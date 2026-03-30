@@ -70,7 +70,23 @@ pub fn start(app: &AppHandle, state: &SidecarState, config_path: &str) -> Result
     Ok(())
 }
 
+/// Best-effort abort of log/traffic subscription tasks.
+pub fn abort_subscriptions(state: &SidecarState) {
+    if let Ok(mut guard) = state.log_task.lock() {
+        if let Some(h) = guard.take() {
+            h.abort();
+        }
+    }
+    if let Ok(mut guard) = state.traffic_task.lock() {
+        if let Some(h) = guard.take() {
+            h.abort();
+        }
+    }
+}
+
 pub fn stop(state: &SidecarState) -> Result<(), SidecarError> {
+    abort_subscriptions(state);
+
     let mut child_lock = state.child.lock().map_err(|e| SidecarError::KillFailed(e.to_string()))?;
 
     match child_lock.take() {

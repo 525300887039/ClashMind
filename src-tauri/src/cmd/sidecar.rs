@@ -3,17 +3,16 @@ use tauri::AppHandle;
 use crate::core::sidecar::{self, SidecarError, SidecarState};
 
 /// Abort old log/traffic tasks and start fresh subscriptions.
-fn restart_subscriptions(app: AppHandle, state: &SidecarState) {
-    if let Some(h) = state.log_task.lock().unwrap().take() {
-        h.abort();
-    }
-    if let Some(h) = state.traffic_task.lock().unwrap().take() {
-        h.abort();
-    }
-    *state.log_task.lock().unwrap() =
-        Some(crate::core::logs::start_log_subscription(app.clone()));
-    *state.traffic_task.lock().unwrap() =
-        Some(crate::core::traffic::start_traffic_subscription(app));
+fn restart_subscriptions(app: AppHandle, state: &SidecarState) -> Result<(), SidecarError> {
+    sidecar::abort_subscriptions(state);
+
+    let mut log_guard = state.log_task.lock().map_err(|e| SidecarError::SpawnFailed(e.to_string()))?;
+    *log_guard = Some(crate::core::logs::start_log_subscription(app.clone()));
+
+    let mut traffic_guard = state.traffic_task.lock().map_err(|e| SidecarError::SpawnFailed(e.to_string()))?;
+    *traffic_guard = Some(crate::core::traffic::start_traffic_subscription(app));
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -23,8 +22,7 @@ pub fn start_mihomo(
     config_path: String,
 ) -> Result<(), SidecarError> {
     sidecar::start(&app, &state, &config_path)?;
-    restart_subscriptions(app, &state);
-    Ok(())
+    restart_subscriptions(app, &state)
 }
 
 #[tauri::command]
@@ -39,8 +37,7 @@ pub fn restart_mihomo(
     config_path: String,
 ) -> Result<(), SidecarError> {
     sidecar::restart(&app, &state, &config_path)?;
-    restart_subscriptions(app, &state);
-    Ok(())
+    restart_subscriptions(app, &state)
 }
 
 #[tauri::command]
