@@ -1,7 +1,10 @@
 //! Collector lifecycle state and WebSocket client entry points.
 
 pub mod buffer;
+pub mod realtime_store;
 pub mod ws_client;
+
+pub use realtime_store::{RealtimeStore, RealtimeSummary};
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},

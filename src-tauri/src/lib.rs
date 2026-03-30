@@ -9,7 +9,7 @@ use std::{future::Future, sync::Mutex};
 use tauri::Manager;
 
 use cmd::MihomoState;
-use collector::{CollectorError, CollectorShutdown, CollectorState};
+use collector::{CollectorError, CollectorShutdown, CollectorState, RealtimeStore};
 use core::sidecar::SidecarState;
 
 fn block_on<F: Future>(future: F) -> F::Output {
@@ -45,6 +45,7 @@ pub fn run() {
             )),
         })
         .manage(CollectorState::default())
+        .manage(RealtimeStore::default())
         .invoke_handler(tauri::generate_handler![
             cmd::sidecar::start_mihomo,
             cmd::sidecar::stop_mihomo,
@@ -72,6 +73,8 @@ pub fn run() {
             cmd::collector::start_collector,
             cmd::collector::stop_collector,
             cmd::collector::get_collector_status,
+            cmd::collector::get_realtime_connections,
+            cmd::collector::get_realtime_summary,
         ])
         .setup(|app| {
             tracing_subscriber::fmt::init();

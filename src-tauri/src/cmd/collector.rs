@@ -5,7 +5,10 @@ use serde::Deserialize;
 use tauri::{Listener, Manager, WebviewWindow};
 use tokio::sync::{oneshot, watch};
 
-use crate::collector::{ws_client, CollectorError, CollectorShutdown, CollectorState};
+use crate::collector::{
+    ws_client::{self, ConnectionRecord},
+    CollectorError, CollectorShutdown, CollectorState, RealtimeStore, RealtimeSummary,
+};
 
 const APP_STORE_KEY: &str = "clashmind-store";
 const APP_STORE_READ_TIMEOUT: Duration = Duration::from_secs(2);
@@ -39,6 +42,7 @@ pub async fn start_collector(
     let (cancel_tx, cancel_rx) = watch::channel(CollectorShutdown::Run);
     let (done_tx, done_rx) = watch::channel(false);
     let app_handle = window.app_handle().clone();
+    window.app_handle().state::<RealtimeStore>().reset().await;
     let task = tauri::async_runtime::spawn(async move {
         ws_client::run_connections_collector(
             app_handle,
@@ -60,10 +64,14 @@ pub async fn start_collector(
 }
 
 #[tauri::command]
-pub async fn stop_collector(state: tauri::State<'_, CollectorState>) -> Result<(), CollectorError> {
+pub async fn stop_collector(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, CollectorState>,
+) -> Result<(), CollectorError> {
     let _operation_guard = state.lock_operation().await;
     state.cleanup_finished().await?;
     state.stop_runtime(CollectorShutdown::Stop).await?;
+    app_handle.state::<RealtimeStore>().reset().await;
     tracing::info!("collector 已停止");
     Ok(())
 }
@@ -75,6 +83,20 @@ pub async fn get_collector_status(
     let _operation_guard = state.lock_operation().await;
     state.cleanup_finished().await?;
     Ok(state.is_running())
+}
+
+#[tauri::command]
+pub async fn get_realtime_connections(
+    store: tauri::State<'_, RealtimeStore>,
+) -> Result<Vec<ConnectionRecord>, String> {
+    Ok(store.get_active_connections().await)
+}
+
+#[tauri::command]
+pub async fn get_realtime_summary(
+    store: tauri::State<'_, RealtimeStore>,
+) -> Result<RealtimeSummary, String> {
+    Ok(store.get_summary().await)
 }
 
 async fn read_ws_config_from_app_store(

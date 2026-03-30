@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use tokio::{
     sync::watch,
     time::{self, MissedTickBehavior},
@@ -13,7 +13,10 @@ use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, Web
 use tracing::{info, warn};
 
 use crate::{
-    collector::buffer::{BatchBuffer, DEFAULT_BATCH_CAPACITY, DEFAULT_FLUSH_INTERVAL},
+    collector::{
+        buffer::{BatchBuffer, DEFAULT_BATCH_CAPACITY, DEFAULT_FLUSH_INTERVAL},
+        RealtimeStore,
+    },
     db::{self, repo_connection, repo_domain::DomainStatsUpdate, DbError},
 };
 
@@ -346,6 +349,7 @@ async fn collect_stream<R: Runtime>(
             }
             Some(Ok(Message::Close(frame))) => {
                 info!(?frame, "collector WebSocket 已关闭");
+                app_handle.state::<RealtimeStore>().clear_active().await;
                 if let Err(error) = flush_pending_state(
                     app_handle,
                     batch_buffer,
@@ -362,6 +366,7 @@ async fn collect_stream<R: Runtime>(
             Some(Ok(_)) => {}
             Some(Err(error)) => {
                 warn!("collector WebSocket 读取失败: {error}");
+                app_handle.state::<RealtimeStore>().clear_active().await;
                 if let Err(error) = flush_pending_state(
                     app_handle,
                     batch_buffer,
@@ -377,6 +382,7 @@ async fn collect_stream<R: Runtime>(
             }
             None => {
                 warn!("collector WebSocket 已断开");
+                app_handle.state::<RealtimeStore>().clear_active().await;
                 if let Err(error) = flush_pending_state(
                     app_handle,
                     batch_buffer,
@@ -416,6 +422,11 @@ async fn apply_snapshot<R: Runtime>(
     if !diff.is_empty() {
         log_snapshot_diff(&diff, current_connections.len());
     }
+
+    app_handle
+        .state::<RealtimeStore>()
+        .update_snapshot(current_connections.values().cloned().collect())
+        .await;
 
     let SnapshotDiff {
         opened,
