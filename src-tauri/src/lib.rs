@@ -1,5 +1,6 @@
 mod cmd;
 mod core;
+mod db;
 mod tray;
 
 use std::sync::Mutex;
@@ -12,8 +13,13 @@ use core::sidecar::SidecarState;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(db::plugin::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_sql::Builder::new().build())
+        .plugin(
+            tauri_plugin_sql::Builder::new()
+                .add_migrations(db::migration::DATABASE_URL, db::migration::get_migrations())
+                .build(),
+        )
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
@@ -23,7 +29,10 @@ pub fn run() {
             traffic_task: Mutex::new(None),
         })
         .manage(MihomoState {
-            client: tokio::sync::Mutex::new(core::mihomo::MihomoClient::new("http://127.0.0.1:9090", "")),
+            client: tokio::sync::Mutex::new(core::mihomo::MihomoClient::new(
+                "http://127.0.0.1:9090",
+                "",
+            )),
         })
         .invoke_handler(tauri::generate_handler![
             cmd::sidecar::start_mihomo,

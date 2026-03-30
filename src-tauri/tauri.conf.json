@@ -9,6 +9,11 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420"
   },
+  "plugins": {
+    "sql": {
+      "preload": ["sqlite:clashmind.db"]
+    }
+  },
   "app": {
     "windows": [
       {
