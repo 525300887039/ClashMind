@@ -2,8 +2,8 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use tauri::AppHandle;
-use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
+use tauri_plugin_shell::ShellExt;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -34,7 +34,10 @@ pub struct SidecarState {
 }
 
 pub fn start(app: &AppHandle, state: &SidecarState, config_path: &str) -> Result<(), SidecarError> {
-    let mut child_lock = state.child.lock().map_err(|e| SidecarError::SpawnFailed(e.to_string()))?;
+    let mut child_lock = state
+        .child
+        .lock()
+        .map_err(|e| SidecarError::SpawnFailed(e.to_string()))?;
 
     if child_lock.is_some() {
         return Err(SidecarError::AlreadyRunning);
@@ -87,15 +90,24 @@ pub fn abort_subscriptions(state: &SidecarState) {
 pub fn stop(state: &SidecarState) -> Result<(), SidecarError> {
     abort_subscriptions(state);
 
-    let mut child_lock = state.child.lock().map_err(|e| SidecarError::KillFailed(e.to_string()))?;
+    let mut child_lock = state
+        .child
+        .lock()
+        .map_err(|e| SidecarError::KillFailed(e.to_string()))?;
 
     match child_lock.take() {
-        Some(child) => child.kill().map_err(|e| SidecarError::KillFailed(e.to_string())),
+        Some(child) => child
+            .kill()
+            .map_err(|e| SidecarError::KillFailed(e.to_string())),
         None => Err(SidecarError::NotRunning),
     }
 }
 
-pub fn restart(app: &AppHandle, state: &SidecarState, config_path: &str) -> Result<(), SidecarError> {
+pub fn restart(
+    app: &AppHandle,
+    state: &SidecarState,
+    config_path: &str,
+) -> Result<(), SidecarError> {
     // 如果正在运行则先停止，忽略 NotRunning 错误
     match stop(state) {
         Ok(()) | Err(SidecarError::NotRunning) => {}

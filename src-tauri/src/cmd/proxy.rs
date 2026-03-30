@@ -27,7 +27,12 @@ pub async fn test_delay(
     url: String,
     timeout: u32,
 ) -> Result<u32, MihomoError> {
-    state.client.lock().await.test_delay(&name, &url, timeout).await
+    state
+        .client
+        .lock()
+        .await
+        .test_delay(&name, &url, timeout)
+        .await
 }
 
 #[tauri::command]
@@ -37,7 +42,12 @@ pub async fn test_group_delay(
     url: String,
     timeout: u32,
 ) -> Result<HashMap<String, u32>, MihomoError> {
-    state.client.lock().await.test_group_delay(&group, &url, timeout).await
+    state
+        .client
+        .lock()
+        .await
+        .test_group_delay(&group, &url, timeout)
+        .await
 }
 
 #[tauri::command]

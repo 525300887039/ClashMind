@@ -43,9 +43,7 @@ pub async fn write_config(path: String, content: String) -> Result<(), ConfigErr
 }
 
 #[tauri::command]
-pub async fn reload_config(
-    state: tauri::State<'_, MihomoState>,
-) -> Result<(), ConfigError> {
+pub async fn reload_config(state: tauri::State<'_, MihomoState>) -> Result<(), ConfigError> {
     Ok(state.client.lock().await.reload_configs().await?)
 }
 

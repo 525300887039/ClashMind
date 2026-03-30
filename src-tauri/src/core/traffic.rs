@@ -25,9 +25,7 @@ pub fn start_traffic_subscription(app: AppHandle) -> tauri::async_runtime::JoinH
                     while let Some(msg) = read.next().await {
                         match msg {
                             Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
-                                if let Ok(v) =
-                                    serde_json::from_str::<serde_json::Value>(&text)
-                                {
+                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
                                     let payload = TrafficPayload {
                                         up: v["up"].as_u64().unwrap_or(0),
                                         down: v["down"].as_u64().unwrap_or(0),

@@ -91,13 +91,19 @@ impl MihomoClient {
     }
 
     pub async fn get_proxies(&self) -> Result<serde_json::Value, MihomoError> {
-        let resp = self.request(reqwest::Method::GET, "/proxies").send().await?;
+        let resp = self
+            .request(reqwest::Method::GET, "/proxies")
+            .send()
+            .await?;
         Ok(resp.json().await?)
     }
 
     pub async fn switch_proxy(&self, group: &str, name: &str) -> Result<(), MihomoError> {
         let resp = self
-            .request(reqwest::Method::PUT, &format!("/proxies/{}", urlencoding::encode(group)))
+            .request(
+                reqwest::Method::PUT,
+                &format!("/proxies/{}", urlencoding::encode(group)),
+            )
             .json(&serde_json::json!({ "name": name }))
             .send()
             .await?;
@@ -152,14 +158,14 @@ impl MihomoClient {
     }
 
     pub async fn get_configs(&self) -> Result<serde_json::Value, MihomoError> {
-        let resp = self.request(reqwest::Method::GET, "/configs").send().await?;
+        let resp = self
+            .request(reqwest::Method::GET, "/configs")
+            .send()
+            .await?;
         Ok(resp.json().await?)
     }
 
-    pub async fn patch_configs(
-        &self,
-        payload: serde_json::Value,
-    ) -> Result<(), MihomoError> {
+    pub async fn patch_configs(&self, payload: serde_json::Value) -> Result<(), MihomoError> {
         let resp = self
             .request(reqwest::Method::PATCH, "/configs")
             .json(&payload)
@@ -173,9 +179,12 @@ impl MihomoClient {
     }
 
     pub async fn close_connection(&self, id: &str) -> Result<(), MihomoError> {
-        self.request(reqwest::Method::DELETE, &format!("/connections/{}", urlencoding::encode(id)))
-            .send()
-            .await?;
+        self.request(
+            reqwest::Method::DELETE,
+            &format!("/connections/{}", urlencoding::encode(id)),
+        )
+        .send()
+        .await?;
         Ok(())
     }
 
@@ -195,7 +204,10 @@ impl MihomoClient {
     }
 
     pub async fn get_version(&self) -> Result<serde_json::Value, MihomoError> {
-        let resp = self.request(reqwest::Method::GET, "/version").send().await?;
+        let resp = self
+            .request(reqwest::Method::GET, "/version")
+            .send()
+            .await?;
         Ok(resp.json().await?)
     }
 

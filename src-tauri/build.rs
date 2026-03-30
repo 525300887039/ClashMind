@@ -38,10 +38,7 @@ fn main() {
 
 fn needs_copy(src: &PathBuf, dst: &PathBuf) -> bool {
     match (fs::metadata(src), fs::metadata(dst)) {
-        (Ok(s), Ok(d)) => {
-            s.len() != d.len()
-                || s.modified().ok() != d.modified().ok()
-        }
+        (Ok(s), Ok(d)) => s.len() != d.len() || s.modified().ok() != d.modified().ok(),
         _ => true,
     }
 }

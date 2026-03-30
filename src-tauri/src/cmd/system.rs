@@ -53,6 +53,10 @@ pub async fn update_mihomo_client(
     base_url: String,
     secret: String,
 ) -> Result<(), MihomoError> {
-    state.client.lock().await.update_connection(&base_url, &secret);
+    state
+        .client
+        .lock()
+        .await
+        .update_connection(&base_url, &secret);
     Ok(())
 }

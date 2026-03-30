@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-  clashmind_lib::run();
+    clashmind_lib::run();
 }
