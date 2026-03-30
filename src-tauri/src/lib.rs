@@ -1,4 +1,5 @@
 mod cmd;
+mod collector;
 mod core;
 mod db;
 mod tray;
@@ -8,6 +9,7 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 use cmd::MihomoState;
+use collector::CollectorState;
 use core::sidecar::SidecarState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -34,6 +36,7 @@ pub fn run() {
                 "",
             )),
         })
+        .manage(CollectorState::default())
         .invoke_handler(tauri::generate_handler![
             cmd::sidecar::start_mihomo,
             cmd::sidecar::stop_mihomo,
@@ -58,6 +61,9 @@ pub fn run() {
             cmd::system::set_system_proxy,
             cmd::system::get_system_proxy,
             cmd::system::update_mihomo_client,
+            cmd::collector::start_collector,
+            cmd::collector::stop_collector,
+            cmd::collector::get_collector_status,
         ])
         .setup(|app| {
             tracing_subscriber::fmt::init();
@@ -68,6 +74,11 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                let collector_state = app.state::<CollectorState>();
+                if let Err(error) = collector_state.request_stop() {
+                    tracing::warn!("退出时停止 collector 失败: {error}");
+                }
+
                 let sidecar_state = app.state::<SidecarState>();
                 match core::sidecar::stop(&sidecar_state) {
                     Ok(()) => tracing::info!("mihomo sidecar 已在退出时停止"),

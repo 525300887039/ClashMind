@@ -1,5 +1,6 @@
 use crate::core::mihomo::MihomoClient;
 
+pub mod collector;
 pub mod config;
 pub mod proxy;
 pub mod sidecar;
