@@ -8,11 +8,13 @@ import { RulesPage } from "@/features/rules/rules-page";
 import { LogsPage } from "@/features/logs/logs-page";
 import { ConfigPage } from "@/features/config/config-page";
 import { SettingsPage } from "@/features/settings/settings-page";
+import { StatsPage } from "@/features/stats/stats-page";
 import { useAppInit } from "@/hooks/use-app-init";
 
 const PAGE_MAP: Record<Page, React.ReactNode> = {
   proxies: <ProxyPage />,
   connections: <ConnectionsPage />,
+  stats: <StatsPage />,
   rules: <RulesPage />,
   logs: <LogsPage />,
   config: <ConfigPage />,

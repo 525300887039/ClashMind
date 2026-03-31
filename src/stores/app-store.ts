@@ -10,6 +10,7 @@ import {
 export type Page =
   | "proxies"
   | "connections"
+  | "stats"
   | "rules"
   | "logs"
   | "config"

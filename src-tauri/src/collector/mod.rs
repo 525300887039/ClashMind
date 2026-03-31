@@ -6,15 +6,25 @@ pub mod ws_client;
 
 pub use realtime_store::{RealtimeStore, RealtimeSummary};
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    time::Duration,
 };
 
+use chrono::{DateTime, Duration as ChronoDuration, DurationRound, SecondsFormat, Utc};
 use serde::Serialize;
-use tauri::async_runtime::JoinHandle;
+use tauri::{async_runtime::JoinHandle, AppHandle, Runtime};
 use thiserror::Error;
-use tokio::sync::watch;
+use tokio::{
+    sync::watch,
+    time::{self, MissedTickBehavior},
+};
+use tracing::warn;
+
+use crate::db::{self, repo_traffic};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum CollectorShutdown {
@@ -225,6 +235,69 @@ impl Default for CollectorState {
     }
 }
 
+/// Starts the background traffic aggregation scheduler without blocking the UI thread.
+pub fn start_aggregation_task<R: Runtime>(app_handle: AppHandle<R>) {
+    tauri::async_runtime::spawn(async move {
+        let mut interval = time::interval(Duration::from_secs(300));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+        loop {
+            interval.tick().await;
+
+            let now = Utc::now();
+            let db = match db::get_db_pool(&app_handle).await {
+                Ok(db) => db,
+                Err(error) => {
+                    warn!("traffic 聚合任务获取数据库连接失败: {error}");
+                    continue;
+                }
+            };
+
+            match build_aggregation_window(&now, ChronoDuration::hours(2), ChronoDuration::hours(1))
+            {
+                Ok((from, to)) => {
+                    if let Err(error) = repo_traffic::aggregate_hourly(&db, &from, &to).await {
+                        warn!("traffic 小时级聚合失败: from={from}, to={to}, error={error}");
+                    }
+                }
+                Err(error) => {
+                    warn!("traffic 小时级聚合窗口计算失败: {error}");
+                }
+            }
+
+            match build_aggregation_window(&now, ChronoDuration::days(2), ChronoDuration::days(1)) {
+                Ok((from, to)) => {
+                    if let Err(error) = repo_traffic::aggregate_daily(&db, &from, &to).await {
+                        warn!("traffic 日级聚合失败: from={from}, to={to}, error={error}");
+                    }
+                }
+                Err(error) => {
+                    warn!("traffic 日级聚合窗口计算失败: {error}");
+                }
+            }
+        }
+    });
+}
+
+fn build_aggregation_window(
+    now: &DateTime<Utc>,
+    lookback: ChronoDuration,
+    bucket: ChronoDuration,
+) -> Result<(String, String), String> {
+    let window_end = now
+        .to_owned()
+        .duration_trunc(bucket)
+        .map_err(|error| format!("结束时间对齐失败: {error}"))?
+        + bucket;
+    let window_start = window_end - bucket - lookback;
+
+    Ok((format_iso8601(window_start), format_iso8601(window_end)))
+}
+
+fn format_iso8601(value: DateTime<Utc>) -> String {
+    value.to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
 /// Errors returned by collector commands and background tasks.
 #[derive(Debug, Error)]
 pub enum CollectorError {
@@ -324,5 +397,49 @@ mod tests {
         assert!(!CollectorShutdown::Stop.should_close_active());
         assert!(CollectorShutdown::StopAndCloseActive.should_stop());
         assert!(CollectorShutdown::StopAndCloseActive.should_close_active());
+    }
+
+    #[test]
+    fn build_aggregation_window_aligns_hourly_bounds() {
+        let parsed = DateTime::parse_from_rfc3339("2026-03-31T10:37:42Z");
+        assert!(parsed.is_ok());
+        let Ok(now) = parsed else {
+            panic!("test timestamp should parse");
+        };
+
+        let window = build_aggregation_window(
+            &now.with_timezone(&Utc),
+            ChronoDuration::hours(2),
+            ChronoDuration::hours(1),
+        );
+        assert!(window.is_ok());
+        let Ok((from, to)) = window else {
+            panic!("hourly aggregation window should be built");
+        };
+
+        assert_eq!(from, "2026-03-31T08:00:00Z");
+        assert_eq!(to, "2026-03-31T11:00:00Z");
+    }
+
+    #[test]
+    fn build_aggregation_window_aligns_daily_bounds() {
+        let parsed = DateTime::parse_from_rfc3339("2026-03-31T10:37:42Z");
+        assert!(parsed.is_ok());
+        let Ok(now) = parsed else {
+            panic!("test timestamp should parse");
+        };
+
+        let window = build_aggregation_window(
+            &now.with_timezone(&Utc),
+            ChronoDuration::days(2),
+            ChronoDuration::days(1),
+        );
+        assert!(window.is_ok());
+        let Ok((from, to)) = window else {
+            panic!("daily aggregation window should be built");
+        };
+
+        assert_eq!(from, "2026-03-29T00:00:00Z");
+        assert_eq!(to, "2026-04-01T00:00:00Z");
     }
 }

@@ -50,6 +50,35 @@ export interface Rule {
   proxy: string;
 }
 
+export interface DomainStat {
+  domain: string;
+  hitCount: number;
+  upload: number;
+  download: number;
+}
+
+export interface TrafficPoint {
+  time: string;
+  upload: number;
+  download: number;
+  connCount: number;
+}
+
+export interface StatsOverview {
+  totalConnections: number;
+  totalUpload: number;
+  totalDownload: number;
+  activeConnections: number;
+  uniqueDomains: number;
+}
+
+export interface RuleStat {
+  rule: string;
+  hitCount: number;
+  upload: number;
+  download: number;
+}
+
 export const api = {
   mihomo: {
     start: (configPath: string) => invoke("start_mihomo", { configPath }),
@@ -74,6 +103,17 @@ export const api = {
   },
   rule: {
     getAll: () => invoke<{ rules: Rule[] }>("get_rules"),
+  },
+  stats: {
+    domains: (days: number, limit: number) =>
+      invoke<DomainStat[]>("get_domain_stats", { days, limit }),
+    trafficHourly: (start: string, end: string) =>
+      invoke<TrafficPoint[]>("get_traffic_hourly", { start, end }),
+    trafficDaily: (start: string, end: string) =>
+      invoke<TrafficPoint[]>("get_traffic_daily", { start, end }),
+    overview: (days: number) => invoke<StatsOverview>("get_stats_overview", { days }),
+    rules: (days: number, limit: number) =>
+      invoke<RuleStat[]>("get_rule_stats", { days, limit }),
   },
   config: {
     read: (path: string) => invoke<string>("read_config", { path }),

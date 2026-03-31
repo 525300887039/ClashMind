@@ -97,5 +97,328 @@ CREATE TABLE IF NOT EXISTS geoip_cache (
 "#,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 6,
+            description: "create_traffic_samples_table",
+            sql: r#"
+CREATE TABLE IF NOT EXISTS traffic_samples (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts         TEXT NOT NULL,
+    upload     INTEGER NOT NULL DEFAULT 0,
+    download   INTEGER NOT NULL DEFAULT 0,
+    conn_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_traffic_samples_ts ON traffic_samples(ts);
+"#,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 7,
+            description: "add_connections_last_observed_at",
+            sql: r#"
+ALTER TABLE connections ADD COLUMN last_observed_at TEXT;
+
+UPDATE connections
+SET last_observed_at = CASE
+    WHEN close_time IS NULL THEN strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+    ELSE COALESCE(
+        close_time,
+        strftime('%Y-%m-%dT%H:%M:%SZ', datetime(created_at)),
+        start_time
+    )
+END
+WHERE last_observed_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_connections_last_observed_at ON connections(last_observed_at);
+"#,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 8,
+            description: "create_rule_stats_table",
+            sql: r#"
+CREATE TABLE IF NOT EXISTS rule_stats (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule       TEXT NOT NULL,
+    day        TEXT NOT NULL,
+    hit_count  INTEGER NOT NULL DEFAULT 0,
+    upload     INTEGER NOT NULL DEFAULT 0,
+    download   INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(rule, day)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rule_stats_day ON rule_stats(day);
+"#,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 9,
+            description: "repair_open_connection_observation_baseline",
+            sql: r#"
+UPDATE connections
+SET last_observed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE close_time IS NULL;
+"#,
+            kind: MigrationKind::Up,
+        },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::{sqlite::SqlitePoolOptions, Row};
+
+    use super::*;
+
+    async fn execute_migration(version: i64, pool: &sqlx::SqlitePool) -> Result<(), String> {
+        let Some(migration) = get_migrations()
+            .into_iter()
+            .find(|migration| migration.version == version)
+        else {
+            return Err(format!("migration {version} not found"));
+        };
+
+        sqlx::query(migration.sql)
+            .execute(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn last_observed_at_backfill_uses_upgrade_time_for_open_connections() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await;
+        assert!(pool.is_ok());
+        let Ok(pool) = pool else {
+            panic!("sqlite pool should be created");
+        };
+
+        let create_connections = sqlx::query(
+            r#"
+CREATE TABLE connections (
+    id           TEXT PRIMARY KEY,
+    host         TEXT NOT NULL,
+    dst_ip       TEXT,
+    dst_port     INTEGER,
+    src_ip       TEXT,
+    src_port     INTEGER,
+    network      TEXT NOT NULL,
+    conn_type    TEXT NOT NULL,
+    rule         TEXT NOT NULL,
+    rule_payload TEXT,
+    proxy_chain  TEXT NOT NULL,
+    upload       INTEGER NOT NULL DEFAULT 0,
+    download     INTEGER NOT NULL DEFAULT 0,
+    start_time   TEXT NOT NULL,
+    close_time   TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"#,
+        )
+        .execute(&pool)
+        .await;
+        assert!(create_connections.is_ok());
+
+        let seed = sqlx::query(
+            r#"
+INSERT INTO connections (
+    id, host, network, conn_type, rule, proxy_chain, upload, download, start_time, close_time, created_at
+) VALUES
+    (
+        'open-conn',
+        'open.example',
+        'tcp',
+        'HTTPS',
+        'MATCH',
+        '["DIRECT"]',
+        10,
+        20,
+        '2026-03-01T08:00:00Z',
+        NULL,
+        '2026-03-01 08:00:00'
+    ),
+    (
+        'closed-conn',
+        'closed.example',
+        'tcp',
+        'HTTPS',
+        'MATCH',
+        '["DIRECT"]',
+        30,
+        40,
+        '2026-03-01T09:00:00Z',
+        '2026-03-01T10:00:00Z',
+        '2026-03-01 09:00:00'
+    );
+"#,
+        )
+        .execute(&pool)
+        .await;
+        assert!(seed.is_ok());
+
+        let migration_result = execute_migration(7, &pool).await;
+        assert!(migration_result.is_ok());
+
+        let open_is_recent = sqlx::query_scalar::<_, i64>(
+            r#"
+SELECT CASE
+    WHEN datetime(last_observed_at) >= datetime('now', '-1 minute') THEN 1
+    ELSE 0
+END
+FROM connections
+WHERE id = 'open-conn';
+"#,
+        )
+        .fetch_one(&pool)
+        .await;
+        assert!(open_is_recent.is_ok());
+        let Ok(open_is_recent) = open_is_recent else {
+            panic!("open connection last_observed_at should be queryable");
+        };
+
+        assert_eq!(open_is_recent, 1);
+
+        let closed_last_observed_at = sqlx::query(
+            r#"
+SELECT last_observed_at
+FROM connections
+WHERE id = 'closed-conn';
+"#,
+        )
+        .fetch_one(&pool)
+        .await;
+        assert!(closed_last_observed_at.is_ok());
+        let Ok(closed_last_observed_at) = closed_last_observed_at else {
+            panic!("closed connection last_observed_at should be queryable");
+        };
+
+        assert_eq!(
+            closed_last_observed_at.get::<String, _>("last_observed_at"),
+            "2026-03-01T10:00:00Z"
+        );
+    }
+
+    #[tokio::test]
+    async fn repair_migration_resets_only_open_connection_baselines() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await;
+        assert!(pool.is_ok());
+        let Ok(pool) = pool else {
+            panic!("sqlite pool should be created");
+        };
+
+        let create_connections = sqlx::query(
+            r#"
+CREATE TABLE connections (
+    id               TEXT PRIMARY KEY,
+    host             TEXT NOT NULL,
+    dst_ip           TEXT,
+    dst_port         INTEGER,
+    src_ip           TEXT,
+    src_port         INTEGER,
+    network          TEXT NOT NULL,
+    conn_type        TEXT NOT NULL,
+    rule             TEXT NOT NULL,
+    rule_payload     TEXT,
+    proxy_chain      TEXT NOT NULL,
+    upload           INTEGER NOT NULL DEFAULT 0,
+    download         INTEGER NOT NULL DEFAULT 0,
+    start_time       TEXT NOT NULL,
+    close_time       TEXT,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    last_observed_at TEXT
+);
+"#,
+        )
+        .execute(&pool)
+        .await;
+        assert!(create_connections.is_ok());
+
+        let seed = sqlx::query(
+            r#"
+INSERT INTO connections (
+    id, host, network, conn_type, rule, proxy_chain, upload, download, start_time, close_time, created_at, last_observed_at
+) VALUES
+    (
+        'open-conn',
+        'open.example',
+        'tcp',
+        'HTTPS',
+        'MATCH',
+        '["DIRECT"]',
+        10,
+        20,
+        '2026-03-01T08:00:00Z',
+        NULL,
+        '2026-03-01 08:00:00',
+        '2026-03-01T08:00:00Z'
+    ),
+    (
+        'closed-conn',
+        'closed.example',
+        'tcp',
+        'HTTPS',
+        'MATCH',
+        '["DIRECT"]',
+        30,
+        40,
+        '2026-03-01T09:00:00Z',
+        '2026-03-01T10:00:00Z',
+        '2026-03-01 09:00:00',
+        '2026-03-01T10:00:00Z'
+    );
+"#,
+        )
+        .execute(&pool)
+        .await;
+        assert!(seed.is_ok());
+
+        let migration_result = execute_migration(9, &pool).await;
+        assert!(migration_result.is_ok());
+
+        let open_is_recent = sqlx::query_scalar::<_, i64>(
+            r#"
+SELECT CASE
+    WHEN datetime(last_observed_at) >= datetime('now', '-1 minute') THEN 1
+    ELSE 0
+END
+FROM connections
+WHERE id = 'open-conn';
+"#,
+        )
+        .fetch_one(&pool)
+        .await;
+        assert!(open_is_recent.is_ok());
+        let Ok(open_is_recent) = open_is_recent else {
+            panic!("open connection last_observed_at should be queryable");
+        };
+
+        assert_eq!(open_is_recent, 1);
+
+        let closed_last_observed_at = sqlx::query(
+            r#"
+SELECT last_observed_at
+FROM connections
+WHERE id = 'closed-conn';
+"#,
+        )
+        .fetch_one(&pool)
+        .await;
+        assert!(closed_last_observed_at.is_ok());
+        let Ok(closed_last_observed_at) = closed_last_observed_at else {
+            panic!("closed connection last_observed_at should be queryable");
+        };
+
+        assert_eq!(
+            closed_last_observed_at.get::<String, _>("last_observed_at"),
+            "2026-03-01T10:00:00Z"
+        );
+    }
 }

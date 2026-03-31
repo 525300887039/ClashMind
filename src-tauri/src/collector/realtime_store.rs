@@ -261,6 +261,7 @@ mod tests {
             upload,
             download,
             start_time: "2026-03-30T10:00:00.000Z".into(),
+            last_observed_at: Some("2026-03-30T10:00:00.000Z".into()),
         }
     }
 

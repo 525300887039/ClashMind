@@ -2,6 +2,7 @@ pub mod migration;
 pub mod plugin;
 pub mod repo_connection;
 pub mod repo_domain;
+pub mod repo_traffic;
 
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -21,6 +22,8 @@ pub enum DbError {
     TransactionFailed(String),
     #[error("数据库写入失败: {0}")]
     WriteFailed(String),
+    #[error("时间窗口无效: {0}")]
+    InvalidTimeWindow(String),
     #[allow(dead_code)]
     #[error("数据库查询失败: {0}")]
     QueryFailed(String),

@@ -75,10 +75,16 @@ pub fn run() {
             cmd::collector::get_collector_status,
             cmd::collector::get_realtime_connections,
             cmd::collector::get_realtime_summary,
+            cmd::stats::get_domain_stats,
+            cmd::stats::get_traffic_hourly,
+            cmd::stats::get_traffic_daily,
+            cmd::stats::get_stats_overview,
+            cmd::stats::get_rule_stats,
         ])
         .setup(|app| {
             tracing_subscriber::fmt::init();
             tray::create_tray(app.handle())?;
+            collector::start_aggregation_task(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())
