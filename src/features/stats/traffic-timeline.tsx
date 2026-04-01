@@ -8,7 +8,7 @@ import {
   subDays,
   subHours,
 } from "date-fns";
-import { Activity, Clock3, RefreshCw, Waypoints } from "lucide-react";
+import { Activity, Clock3, Waypoints } from "lucide-react";
 import {
   CartesianGrid,
   Legend,
@@ -22,6 +22,11 @@ import {
 import type { TooltipContentProps } from "recharts";
 import type { TrafficPoint } from "@/lib/tauri-api";
 import { cn, formatBytes } from "@/lib/utils";
+import { ChartEmptyState } from "./components/chart-empty-state";
+import { HighlightCard } from "./components/highlight-card";
+import { StatusBadge } from "./components/status-badge";
+import { SummaryCard } from "./components/summary-card";
+import { integerFormatter } from "./constants";
 import { useTrafficDaily, useTrafficHourly } from "./hooks/use-stats";
 
 type TrafficGranularity = "hourly" | "daily";
@@ -48,7 +53,6 @@ interface TrafficChartRow {
   total: number;
 }
 
-const integerFormatter = new Intl.NumberFormat("zh-CN");
 const UPLOAD_COLOR = "#60a5fa";
 const DOWNLOAD_COLOR = "#34d399";
 const CONNECTION_COLOR = "#fbbf24";
@@ -374,14 +378,16 @@ export function TrafficTimeline() {
             {activeQuery.isLoading ? (
               <ChartSkeleton />
             ) : activeQuery.error ? (
-              <EmptyChartState
+              <ChartEmptyState
                 title="流量趋势加载失败"
                 description={activeQuery.error.message}
+                icon={<Clock3 className="size-5" />}
               />
             ) : !hasData ? (
-              <EmptyChartState
+              <ChartEmptyState
                 title="当前时间窗口没有趋势数据"
                 description="等待采样任务写入后，这里会自动显示上传、下载和连接数变化。"
+                icon={<Clock3 className="size-5" />}
               />
             ) : (
               <ResponsiveContainer width="100%" height="100%">
@@ -562,99 +568,6 @@ function ControlGroup<Id extends string>({
             </button>
           );
         })}
-      </div>
-    </div>
-  );
-}
-
-function SummaryCard({
-  label,
-  value,
-  caption,
-}: {
-  label: string;
-  value: string | number;
-  caption: string;
-}) {
-  return (
-    <div className="rounded-[1.25rem] border border-border/70 bg-background/82 p-4">
-      <div className="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">
-        {label}
-      </div>
-      <div className="mt-3 text-2xl font-semibold tracking-tight text-foreground">
-        {value}
-      </div>
-      <p className="mt-2 text-sm text-muted-foreground">{caption}</p>
-    </div>
-  );
-}
-
-function HighlightCard({
-  label,
-  value,
-  description,
-  icon,
-}: {
-  label: string;
-  value: string;
-  description: string;
-  icon?: React.ReactNode;
-}) {
-  return (
-    <article className="rounded-[1.5rem] border border-border/70 bg-muted/20 p-5">
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">
-          {label}
-        </div>
-        {icon ? (
-          <div className="rounded-full border border-border/70 bg-background/75 p-2 text-muted-foreground">
-            {icon}
-          </div>
-        ) : null}
-      </div>
-      <div className="mt-3 text-xl font-semibold tracking-tight text-foreground">{value}</div>
-      <p className="mt-2 text-sm text-muted-foreground">{description}</p>
-    </article>
-  );
-}
-
-function StatusBadge({
-  busy,
-  idleLabel,
-}: {
-  busy: boolean;
-  idleLabel: string;
-}) {
-  return (
-    <div
-      className={cn(
-        "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium",
-        busy
-          ? "border-primary/20 bg-primary/10 text-primary"
-          : "border-border bg-muted/45 text-muted-foreground",
-      )}
-    >
-      <RefreshCw className={cn("size-3.5", busy && "animate-spin")} />
-      {busy ? "刷新中" : idleLabel}
-    </div>
-  );
-}
-
-function EmptyChartState({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      <div className="rounded-full border border-border bg-muted/50 p-3 text-muted-foreground">
-        <Clock3 className="size-5" />
-      </div>
-      <div>
-        <p className="text-base font-medium text-foreground">{title}</p>
-        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
       </div>
     </div>
   );

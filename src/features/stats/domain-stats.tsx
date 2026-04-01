@@ -1,9 +1,8 @@
-import { useDeferredValue, useId, useState, useTransition } from "react";
+import { useDeferredValue, useId, useMemo, useState, useTransition } from "react";
 import {
   BarChart3,
   ChevronDown,
   ChevronUp,
-  RefreshCw,
   Search,
 } from "lucide-react";
 import {
@@ -17,9 +16,15 @@ import {
 } from "recharts";
 import type { DomainStat } from "@/lib/tauri-api";
 import { cn, formatBytes } from "@/lib/utils";
+import { ChartEmptyState } from "./components/chart-empty-state";
+import { HighlightCard } from "./components/highlight-card";
+import { RangeSelector } from "./components/range-selector";
+import { StatusBadge } from "./components/status-badge";
+import { SummaryCard } from "./components/summary-card";
+import { TableSkeleton } from "./components/table-skeleton";
+import { getRangeCaption, integerFormatter, type StatsRange } from "./constants";
 import { useDomainStats } from "./hooks/use-stats";
 
-type DomainRange = 0 | 7 | 30;
 type SortKey = "rank" | "domain" | "hitCount" | "upload" | "download" | "total";
 type SortDirection = "asc" | "desc";
 
@@ -41,12 +46,6 @@ interface ChartRow {
 
 const DOMAIN_TABLE_LIMIT = 2_147_483_647;
 
-const RANGE_OPTIONS: { days: DomainRange; label: string; caption: string }[] = [
-  { days: 0, label: "1天", caption: "今天" },
-  { days: 7, label: "7天", caption: "近 7 天" },
-  { days: 30, label: "30天", caption: "近 30 天" },
-];
-
 const TABLE_COLUMNS: { key: SortKey; label: string; align?: "left" | "right" }[] = [
   { key: "rank", label: "排名" },
   { key: "domain", label: "域名" },
@@ -55,8 +54,6 @@ const TABLE_COLUMNS: { key: SortKey; label: string; align?: "left" | "right" }[]
   { key: "download", label: "下载", align: "right" },
   { key: "total", label: "总流量", align: "right" },
 ];
-
-const integerFormatter = new Intl.NumberFormat("zh-CN");
 
 function normalizeDomain(domain: string): string {
   const trimmed = domain.trim();
@@ -103,7 +100,7 @@ function shortenDomain(domain: string): string {
 }
 
 export function DomainStats() {
-  const [selectedDays, setSelectedDays] = useState<DomainRange>(7);
+  const [selectedDays, setSelectedDays] = useState<StatsRange>(7);
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("total");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -116,51 +113,70 @@ export function DomainStats() {
     DOMAIN_TABLE_LIMIT,
   );
 
-  const rankedRows: DomainRow[] = (data ?? []).map((item, index) => {
-    const displayDomain = normalizeDomain(item.domain);
+  const rankedRows: DomainRow[] = useMemo(
+    () =>
+      (data ?? []).map((item, index) => {
+        const displayDomain = normalizeDomain(item.domain);
 
-    return {
-      ...item,
-      displayDomain,
-      normalizedDomain: displayDomain.toLowerCase(),
-      rank: index + 1,
-      total: item.upload + item.download,
-    };
-  });
-
-  const filteredRows = deferredSearch
-    ? rankedRows.filter((row) => row.normalizedDomain.includes(deferredSearch))
-    : rankedRows;
-
-  const sortedRows: DomainRow[] = [...filteredRows].sort((left, right) =>
-    compareDomainRows(left, right, sortKey, sortDirection),
+        return {
+          ...item,
+          displayDomain,
+          normalizedDomain: displayDomain.toLowerCase(),
+          rank: index + 1,
+          total: item.upload + item.download,
+        };
+      }),
+    [data],
   );
 
-  const chartRows: ChartRow[] = [...filteredRows]
-    .sort((left, right) => compareDomainRows(left, right, "total", "desc"))
-    .slice(0, 20)
-    .map((row) => ({
-      domain: row.displayDomain,
-      domainLabel: shortenDomain(row.displayDomain),
-      hitCount: row.hitCount,
-      upload: row.upload,
-      download: row.download,
-      total: row.total,
-    }));
-
-  const totals = filteredRows.reduce(
-    (accumulator, row) => ({
-      domains: accumulator.domains + 1,
-      hitCount: accumulator.hitCount + row.hitCount,
-      upload: accumulator.upload + row.upload,
-      download: accumulator.download + row.download,
-      total: accumulator.total + row.total,
-    }),
-    { domains: 0, hitCount: 0, upload: 0, download: 0, total: 0 },
+  const filteredRows = useMemo(
+    () =>
+      deferredSearch
+        ? rankedRows.filter((row) => row.normalizedDomain.includes(deferredSearch))
+        : rankedRows,
+    [rankedRows, deferredSearch],
   );
 
-  const selectedRangeCaption =
-    selectedDays === 0 ? "今天" : selectedDays === 7 ? "近 7 天" : "近 30 天";
+  const sortedRows: DomainRow[] = useMemo(
+    () =>
+      [...filteredRows].sort((left, right) =>
+        compareDomainRows(left, right, sortKey, sortDirection),
+      ),
+    [filteredRows, sortKey, sortDirection],
+  );
+
+  const chartRows: ChartRow[] = useMemo(
+    () =>
+      [...filteredRows]
+        .sort((left, right) => compareDomainRows(left, right, "total", "desc"))
+        .slice(0, 20)
+        .map((row) => ({
+          domain: row.displayDomain,
+          domainLabel: shortenDomain(row.displayDomain),
+          hitCount: row.hitCount,
+          upload: row.upload,
+          download: row.download,
+          total: row.total,
+        })),
+    [filteredRows],
+  );
+
+  const totals = useMemo(
+    () =>
+      filteredRows.reduce(
+        (accumulator, row) => ({
+          domains: accumulator.domains + 1,
+          hitCount: accumulator.hitCount + row.hitCount,
+          upload: accumulator.upload + row.upload,
+          download: accumulator.download + row.download,
+          total: accumulator.total + row.total,
+        }),
+        { domains: 0, hitCount: 0, upload: 0, download: 0, total: 0 },
+      ),
+    [filteredRows],
+  );
+
+  const selectedRangeCaption = getRangeCaption(selectedDays);
 
   const handleSort = (nextKey: SortKey) => {
     startTransition(() => {
@@ -198,30 +214,11 @@ export function DomainStats() {
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="inline-flex rounded-full border border-border bg-muted/50 p-1">
-                {RANGE_OPTIONS.map((option) => {
-                  const isActive = option.days === selectedDays;
-
-                  return (
-                    <button
-                      key={option.days}
-                      type="button"
-                      onClick={() => startTransition(() => setSelectedDays(option.days))}
-                      className={cn(
-                        "rounded-full px-3 py-2 text-sm transition-all",
-                        isActive
-                          ? "bg-primary text-primary-foreground shadow-[0_12px_32px_-18px_var(--color-primary)]"
-                          : "text-muted-foreground hover:bg-background hover:text-foreground",
-                      )}
-                    >
-                      <span className="font-medium">{option.label}</span>
-                      <span className="ml-1 hidden text-xs opacity-80 sm:inline">
-                        {option.caption}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+              <RangeSelector
+                selectedDays={selectedDays}
+                onSelect={(days) => startTransition(() => setSelectedDays(days))}
+                isPending={isPending}
+              />
 
               <label className="relative block min-w-[18rem] flex-1">
                 <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -241,21 +238,25 @@ export function DomainStats() {
               label="命中域名"
               value={integerFormatter.format(totals.domains)}
               caption={`${selectedRangeCaption} 过滤结果`}
+              className="bg-background/80"
             />
             <SummaryCard
               label="访问次数"
               value={integerFormatter.format(totals.hitCount)}
               caption="按域名聚合的访问命中"
+              className="bg-background/80"
             />
             <SummaryCard
               label="上传流量"
               value={formatBytes(totals.upload)}
               caption="当前筛选范围内累计上传"
+              className="bg-background/80"
             />
             <SummaryCard
               label="总流量"
               value={formatBytes(totals.total)}
               caption={`下载 ${formatBytes(totals.download)}`}
+              className="bg-background/80"
             />
           </div>
         </div>
@@ -277,14 +278,16 @@ export function DomainStats() {
             {isLoading ? (
               <ChartSkeleton />
             ) : error ? (
-              <EmptyChartState
+              <ChartEmptyState
                 title="域名统计加载失败"
                 description={error.message}
+                icon={<BarChart3 className="size-5" />}
               />
             ) : chartRows.length === 0 ? (
-              <EmptyChartState
+              <ChartEmptyState
                 title="没有可展示的域名数据"
                 description="当前时间范围或搜索条件下没有命中记录。"
+                icon={<BarChart3 className="size-5" />}
               />
             ) : (
               <ResponsiveContainer width="100%" height="100%">
@@ -367,6 +370,7 @@ export function DomainStats() {
                 ? `${formatBytes(chartRows[0].total)} · ${integerFormatter.format(chartRows[0].hitCount)} 次访问`
                 : "等待采样数据写入后自动展示"
             }
+            truncateValue
           />
           <HighlightCard
             label="当前刷新"
@@ -397,7 +401,7 @@ export function DomainStats() {
         </div>
 
         {isLoading ? (
-          <TableSkeleton />
+          <TableSkeleton rows={7} columns={6} />
         ) : error ? (
           <div className="px-5 py-10 text-sm text-destructive">
             加载失败: {error.message}
@@ -483,86 +487,6 @@ export function DomainStats() {
   );
 }
 
-function SummaryCard({
-  label,
-  value,
-  caption,
-}: {
-  label: string;
-  value: string;
-  caption: string;
-}) {
-  return (
-    <div className="rounded-[1.25rem] border border-border/70 bg-background/80 p-4">
-      <div className="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">
-        {label}
-      </div>
-      <div className="mt-3 text-2xl font-semibold tracking-tight text-foreground">
-        {value}
-      </div>
-      <p className="mt-2 text-sm text-muted-foreground">{caption}</p>
-    </div>
-  );
-}
-
-function HighlightCard({
-  label,
-  value,
-  description,
-}: {
-  label: string;
-  value: string;
-  description: string;
-}) {
-  return (
-    <article className="rounded-[1.5rem] border border-border/70 bg-muted/20 p-5">
-      <div className="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">
-        {label}
-      </div>
-      <div className="mt-3 truncate text-xl font-semibold tracking-tight text-foreground">
-        {value}
-      </div>
-      <p className="mt-2 text-sm text-muted-foreground">{description}</p>
-    </article>
-  );
-}
-
-function StatusBadge({ busy }: { busy: boolean }) {
-  return (
-    <div
-      className={cn(
-        "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium",
-        busy
-          ? "border-primary/20 bg-primary/10 text-primary"
-          : "border-border bg-muted/45 text-muted-foreground",
-      )}
-    >
-      <RefreshCw className={cn("size-3.5", busy && "animate-spin")} />
-      {busy ? "刷新中" : "自动刷新 60s"}
-    </div>
-  );
-}
-
-function EmptyChartState({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      <div className="rounded-full border border-border bg-muted/50 p-3 text-muted-foreground">
-        <BarChart3 className="size-5" />
-      </div>
-      <div>
-        <p className="text-base font-medium text-foreground">{title}</p>
-        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-      </div>
-    </div>
-  );
-}
-
 function TooltipValue({
   total,
   upload,
@@ -594,26 +518,6 @@ function ChartSkeleton() {
             style={{ height: `${height}%` }}
           />
           <div className="h-3 animate-pulse rounded-full bg-muted" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function TableSkeleton() {
-  return (
-    <div className="space-y-3 px-5 py-5">
-      {Array.from({ length: 7 }, (_, index) => (
-        <div
-          key={index}
-          className="grid animate-pulse grid-cols-[5rem_minmax(14rem,1fr)_8rem_8rem_8rem_8rem] gap-3 rounded-[1rem] border border-border/60 bg-muted/20 px-4 py-3"
-        >
-          <div className="h-4 rounded-full bg-muted" />
-          <div className="h-4 rounded-full bg-muted" />
-          <div className="h-4 rounded-full bg-muted" />
-          <div className="h-4 rounded-full bg-muted" />
-          <div className="h-4 rounded-full bg-muted" />
-          <div className="h-4 rounded-full bg-muted" />
         </div>
       ))}
     </div>

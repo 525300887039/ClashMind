@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useStatsOverview } from "@/features/stats/hooks/use-stats";
 import { cn, formatBytes } from "@/lib/utils";
+import { integerFormatter } from "./constants";
 import { DomainStats } from "./domain-stats";
 import { GeoMap } from "./geo-map";
 import { TrafficTimeline } from "./traffic-timeline";
@@ -16,7 +17,6 @@ import { TrafficTimeline } from "./traffic-timeline";
 type StatsTab = "overview" | "domains" | "traffic" | "geo";
 
 const OVERVIEW_DAYS = 7;
-const integerFormatter = new Intl.NumberFormat("zh-CN");
 
 const STATS_TABS: {
   id: StatsTab;

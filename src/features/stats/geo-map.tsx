@@ -1,4 +1,4 @@
-import { useState, useTransition } from "react";
+import { useCallback, useMemo, useRef, useState, useTransition } from "react";
 import {
   Globe2,
   MapPinned,
@@ -10,26 +10,27 @@ import { scaleLinear } from "d3-scale";
 import { ComposableMap, Geographies, Geography } from "react-simple-maps";
 import type { GeoStat } from "@/lib/tauri-api";
 import { cn, formatBytes } from "@/lib/utils";
+import { ChartEmptyState } from "./components/chart-empty-state";
+import { HighlightCard } from "./components/highlight-card";
+import { RangeSelector } from "./components/range-selector";
+import { StatusBadge } from "./components/status-badge";
+import { SummaryCard } from "./components/summary-card";
+import { TableSkeleton } from "./components/table-skeleton";
+import { getRangeCaption, integerFormatter, type StatsRange } from "./constants";
 import { useGeoStats } from "./hooks/use-stats";
 import worldGeographyUrl from "@/assets/geo/world-countries-110m.json?url";
 
-type GeoRange = 0 | 7 | 30;
-
-interface HoverState {
+interface HoveredCountry {
   country: string;
   traffic: number;
   connCount: number;
-  x: number;
-  y: number;
 }
 
-const integerFormatter = new Intl.NumberFormat("zh-CN");
-
-const RANGE_OPTIONS: { days: GeoRange; label: string; caption: string }[] = [
-  { days: 0, label: "1天", caption: "今天" },
-  { days: 7, label: "7天", caption: "近 7 天" },
-  { days: 30, label: "30天", caption: "近 30 天" },
-];
+const DEFAULT_TOOLTIP_OFFSET = 24;
+const TOOLTIP_CURSOR_OFFSET = 12;
+const TOOLTIP_MARGIN = 16;
+const TOOLTIP_WIDTH = 196;
+const TOOLTIP_HEIGHT = 96;
 
 const COUNTRY_NAME_ALIASES: Record<string, readonly string[]> = {
   "bosnia and herzegovina": ["bosnia and herz."],
@@ -88,35 +89,28 @@ function getCountryFlag(countryCode: string): string {
   );
 }
 
-function buildHoverState(
-  event: React.MouseEvent<SVGPathElement>,
-  country: string,
-  traffic: number,
-  connCount: number,
-): HoverState {
+function getTooltipPosition(event: React.MouseEvent<SVGPathElement>) {
   const svgRect = event.currentTarget.ownerSVGElement?.getBoundingClientRect();
 
   if (!svgRect) {
     return {
-      country,
-      traffic,
-      connCount,
-      x: 24,
-      y: 24,
+      left: DEFAULT_TOOLTIP_OFFSET,
+      top: DEFAULT_TOOLTIP_OFFSET,
     };
   }
 
-  const tooltipWidth = 196;
-  const tooltipHeight = 96;
-  const rawX = event.clientX - svgRect.left + 12;
-  const rawY = event.clientY - svgRect.top + 12;
+  const rawX = event.clientX - svgRect.left + TOOLTIP_CURSOR_OFFSET;
+  const rawY = event.clientY - svgRect.top + TOOLTIP_CURSOR_OFFSET;
 
   return {
-    country,
-    traffic,
-    connCount,
-    x: Math.min(Math.max(rawX, 16), Math.max(svgRect.width - tooltipWidth - 16, 16)),
-    y: Math.min(Math.max(rawY, 16), Math.max(svgRect.height - tooltipHeight - 16, 16)),
+    left: Math.min(
+      Math.max(rawX, TOOLTIP_MARGIN),
+      Math.max(svgRect.width - TOOLTIP_WIDTH - TOOLTIP_MARGIN, TOOLTIP_MARGIN),
+    ),
+    top: Math.min(
+      Math.max(rawY, TOOLTIP_MARGIN),
+      Math.max(svgRect.height - TOOLTIP_HEIGHT - TOOLTIP_MARGIN, TOOLTIP_MARGIN),
+    ),
   };
 }
 
@@ -137,25 +131,81 @@ function createTrafficScale(maxTraffic: number) {
 }
 
 export function GeoMap() {
-  const [selectedDays, setSelectedDays] = useState<GeoRange>(7);
-  const [hoverState, setHoverState] = useState<HoverState | null>(null);
+  const [selectedDays, setSelectedDays] = useState<StatsRange>(7);
+  const [hoveredCountry, setHoveredCountry] = useState<HoveredCountry | null>(null);
   const [isPending, startTransition] = useTransition();
+  const tooltipRef = useRef<HTMLDivElement>(null);
 
   const { data, isLoading, isFetching, error } = useGeoStats(selectedDays);
-  const stats = [...(data ?? [])].sort(
-    (left, right) =>
-      right.totalTraffic - left.totalTraffic ||
-      right.connCount - left.connCount ||
-      left.country.localeCompare(right.country, "zh-CN"),
+
+  const stats = useMemo(
+    () =>
+      [...(data ?? [])].sort(
+        (left, right) =>
+          right.totalTraffic - left.totalTraffic ||
+          right.connCount - left.connCount ||
+          left.country.localeCompare(right.country, "zh-CN"),
+      ),
+    [data],
   );
-  const totalTraffic = stats.reduce((sum, stat) => sum + stat.totalTraffic, 0);
-  const totalConnections = stats.reduce((sum, stat) => sum + stat.connCount, 0);
+
+  const totalTraffic = useMemo(
+    () => stats.reduce((sum, stat) => sum + stat.totalTraffic, 0),
+    [stats],
+  );
+  const totalConnections = useMemo(
+    () => stats.reduce((sum, stat) => sum + stat.connCount, 0),
+    [stats],
+  );
   const maxTraffic = stats[0]?.totalTraffic ?? 0;
-  const trafficScale = createTrafficScale(maxTraffic);
-  const countryLookup = buildCountryLookup(stats);
+  const trafficScale = useMemo(() => createTrafficScale(maxTraffic), [maxTraffic]);
+  const countryLookup = useMemo(() => buildCountryLookup(stats), [stats]);
   const leadingCountry = stats[0];
-  const selectedRangeCaption =
-    selectedDays === 0 ? "今天" : selectedDays === 7 ? "近 7 天" : "近 30 天";
+  const selectedRangeCaption = getRangeCaption(selectedDays);
+  const updateTooltipPosition = useCallback(
+    (event: React.MouseEvent<SVGPathElement>) => {
+      const tooltip = tooltipRef.current;
+      if (!tooltip) {
+        return;
+      }
+
+      const { left, top } = getTooltipPosition(event);
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
+    },
+    [],
+  );
+  const handleMouseEnter = useCallback(
+    (
+      event: React.MouseEvent<SVGPathElement>,
+      country: string,
+      traffic: number,
+      connCount: number,
+    ) => {
+      setHoveredCountry((previous) => {
+        if (
+          previous?.country === country &&
+          previous?.traffic === traffic &&
+          previous?.connCount === connCount
+        ) {
+          return previous;
+        }
+
+        return { country, traffic, connCount };
+      });
+      updateTooltipPosition(event);
+    },
+    [updateTooltipPosition],
+  );
+  const handleMouseMove = useCallback(
+    (event: React.MouseEvent<SVGPathElement>) => {
+      updateTooltipPosition(event);
+    },
+    [updateTooltipPosition],
+  );
+  const handleMouseLeave = useCallback(() => {
+    setHoveredCountry(null);
+  }, []);
 
   return (
     <div className="flex flex-col gap-5">
@@ -180,30 +230,11 @@ export function GeoMap() {
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="inline-flex rounded-full border border-border bg-muted/50 p-1">
-                {RANGE_OPTIONS.map((option) => {
-                  const isActive = option.days === selectedDays;
-
-                  return (
-                    <button
-                      key={option.days}
-                      type="button"
-                      onClick={() => startTransition(() => setSelectedDays(option.days))}
-                      className={cn(
-                        "rounded-full px-3 py-2 text-sm transition-all",
-                        isActive
-                          ? "bg-primary text-primary-foreground shadow-[0_12px_32px_-18px_var(--color-primary)]"
-                          : "text-muted-foreground hover:bg-background hover:text-foreground",
-                      )}
-                    >
-                      <span className="font-medium">{option.label}</span>
-                      <span className="ml-1 hidden text-xs opacity-80 sm:inline">
-                        {option.caption}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+              <RangeSelector
+                selectedDays={selectedDays}
+                onSelect={(days) => startTransition(() => setSelectedDays(days))}
+                isPending={isPending}
+              />
               <StatusBadge busy={isFetching || isPending} />
             </div>
           </div>
@@ -213,16 +244,19 @@ export function GeoMap() {
               label="覆盖国家"
               value={integerFormatter.format(stats.length)}
               caption={`${selectedRangeCaption} 已命中的国家/地区`}
+              truncate
             />
             <SummaryCard
               label="连接总数"
               value={integerFormatter.format(totalConnections)}
               caption="按国家聚合后的连接命中次数"
+              truncate
             />
             <SummaryCard
               label="总流量"
               value={formatBytes(totalTraffic)}
               caption="所有已识别国家的累计流量"
+              truncate
             />
             <SummaryCard
               label="榜首国家"
@@ -232,6 +266,7 @@ export function GeoMap() {
                   ? `${formatBytes(leadingCountry.totalTraffic)} · ${integerFormatter.format(leadingCountry.connCount)} 次连接`
                   : "等待采样数据进入地理解析"
               }
+              truncate
             />
           </div>
         </div>
@@ -260,7 +295,12 @@ export function GeoMap() {
             {isLoading ? (
               <MapSkeleton />
             ) : error ? (
-              <MapEmptyState title="地理统计加载失败" description={error.message} />
+              <ChartEmptyState
+                title="地理统计加载失败"
+                description={error.message}
+                icon={<MapPinned className="size-5" />}
+                variant="dark"
+              />
             ) : (
               <div className="relative h-full">
                 <ComposableMap
@@ -275,6 +315,9 @@ export function GeoMap() {
                         const stat = countryLookup.get(
                           normalizeCountryName(geographyName),
                         );
+                        const country = stat?.country ?? geographyName;
+                        const traffic = stat?.totalTraffic ?? 0;
+                        const connCount = stat?.connCount ?? 0;
                         const fill = stat
                           ? trafficScale(stat.totalTraffic)
                           : "rgba(255,255,255,0.08)";
@@ -287,26 +330,10 @@ export function GeoMap() {
                             stroke="rgba(148,163,184,0.28)"
                             strokeWidth={0.45}
                             onMouseEnter={(event) =>
-                              setHoverState(
-                                buildHoverState(
-                                  event,
-                                  stat?.country ?? geographyName,
-                                  stat?.totalTraffic ?? 0,
-                                  stat?.connCount ?? 0,
-                                ),
-                              )
+                              handleMouseEnter(event, country, traffic, connCount)
                             }
-                            onMouseMove={(event) =>
-                              setHoverState(
-                                buildHoverState(
-                                  event,
-                                  stat?.country ?? geographyName,
-                                  stat?.totalTraffic ?? 0,
-                                  stat?.connCount ?? 0,
-                                ),
-                              )
-                            }
-                            onMouseLeave={() => setHoverState(null)}
+                            onMouseMove={handleMouseMove}
+                            onMouseLeave={handleMouseLeave}
                             style={{
                               default: { outline: "none" },
                               hover: {
@@ -324,27 +351,31 @@ export function GeoMap() {
                   </Geographies>
                 </ComposableMap>
 
-                {hoverState ? (
-                  <div
-                    className="pointer-events-none absolute min-w-[12rem] rounded-[1rem] border border-white/10 bg-slate-950/92 px-4 py-3 text-xs shadow-[0_24px_80px_-36px_rgba(2,6,23,0.95)] backdrop-blur"
-                    style={{ left: hoverState.x, top: hoverState.y }}
-                  >
-                    <div className="text-[11px] font-medium tracking-[0.18em] text-slate-400 uppercase">
-                      Geo Snapshot
-                    </div>
-                    <div className="mt-2 text-sm font-semibold text-white">
-                      {hoverState.country}
-                    </div>
-                    <div className="mt-3 space-y-1.5 text-slate-200">
-                      <div>总流量 {formatBytes(hoverState.traffic)}</div>
-                      <div>连接数 {integerFormatter.format(hoverState.connCount)}</div>
-                    </div>
+                <div
+                  ref={tooltipRef}
+                  aria-hidden={hoveredCountry === null}
+                  className={cn(
+                    "pointer-events-none absolute top-6 left-6 min-w-[12rem] rounded-[1rem] border border-white/10 bg-slate-950/92 px-4 py-3 text-xs shadow-[0_24px_80px_-36px_rgba(2,6,23,0.95)] backdrop-blur",
+                    hoveredCountry ? "visible" : "invisible",
+                  )}
+                >
+                  <div className="text-[11px] font-medium tracking-[0.18em] text-slate-400 uppercase">
+                    Geo Snapshot
                   </div>
-                ) : (
+                  <div className="mt-2 text-sm font-semibold text-white">
+                    {hoveredCountry?.country ?? ""}
+                  </div>
+                  <div className="mt-3 space-y-1.5 text-slate-200">
+                    <div>总流量 {formatBytes(hoveredCountry?.traffic ?? 0)}</div>
+                    <div>连接数 {integerFormatter.format(hoveredCountry?.connCount ?? 0)}</div>
+                  </div>
+                </div>
+
+                {hoveredCountry === null ? (
                   <div className="pointer-events-none absolute bottom-6 right-6 max-w-[13rem] rounded-[1rem] border border-white/10 bg-slate-950/75 px-4 py-3 text-xs text-slate-300/85 backdrop-blur">
                     将鼠标移到地图上查看国家流量与连接数。
                   </div>
-                )}
+                ) : null}
 
                 {!stats.length ? (
                   <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6">
@@ -416,7 +447,7 @@ export function GeoMap() {
         </div>
 
         {isLoading ? (
-          <TableSkeleton />
+          <TableSkeleton rows={6} columns={5} />
         ) : error ? (
           <div className="px-5 py-10 text-sm text-destructive">
             加载失败: {error.message}
@@ -480,71 +511,6 @@ export function GeoMap() {
   );
 }
 
-function SummaryCard({
-  label,
-  value,
-  caption,
-}: {
-  label: string;
-  value: string;
-  caption: string;
-}) {
-  return (
-    <div className="rounded-[1.25rem] border border-border/70 bg-background/82 p-4">
-      <div className="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">
-        {label}
-      </div>
-      <div className="mt-3 truncate text-2xl font-semibold tracking-tight text-foreground">
-        {value}
-      </div>
-      <p className="mt-2 text-sm text-muted-foreground">{caption}</p>
-    </div>
-  );
-}
-
-function HighlightCard({
-  label,
-  value,
-  description,
-  icon,
-}: {
-  label: string;
-  value: string;
-  description: string;
-  icon: React.ReactNode;
-}) {
-  return (
-    <article className="rounded-[1.5rem] border border-border/70 bg-muted/20 p-5">
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">
-          {label}
-        </div>
-        <div className="rounded-full border border-border/70 bg-background/75 p-2 text-muted-foreground">
-          {icon}
-        </div>
-      </div>
-      <div className="mt-3 text-xl font-semibold tracking-tight text-foreground">{value}</div>
-      <p className="mt-2 text-sm text-muted-foreground">{description}</p>
-    </article>
-  );
-}
-
-function StatusBadge({ busy }: { busy: boolean }) {
-  return (
-    <div
-      className={cn(
-        "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium",
-        busy
-          ? "border-primary/20 bg-primary/10 text-primary"
-          : "border-border bg-muted/45 text-muted-foreground",
-      )}
-    >
-      <RefreshCw className={cn("size-3.5", busy && "animate-spin")} />
-      {busy ? "刷新中" : "自动刷新 60s"}
-    </div>
-  );
-}
-
 function MapSkeleton() {
   return (
     <div className="flex h-full items-center justify-center px-6">
@@ -557,45 +523,6 @@ function MapSkeleton() {
           <div className="h-3 w-8 animate-pulse rounded-full bg-white/10" />
         </div>
       </div>
-    </div>
-  );
-}
-
-function MapEmptyState({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      <div className="rounded-full border border-white/10 bg-white/5 p-3 text-slate-200">
-        <MapPinned className="size-5" />
-      </div>
-      <div>
-        <p className="text-base font-medium text-white">{title}</p>
-        <p className="mt-1 text-sm text-slate-300/80">{description}</p>
-      </div>
-    </div>
-  );
-}
-
-function TableSkeleton() {
-  return (
-    <div className="space-y-3 px-5 py-5">
-      {Array.from({ length: 6 }, (_, index) => (
-        <div
-          key={index}
-          className="grid animate-pulse grid-cols-[5rem_minmax(14rem,1fr)_8rem_9rem_7rem] gap-3 rounded-[1rem] border border-border/60 bg-muted/20 px-4 py-3"
-        >
-          <div className="h-4 rounded-full bg-muted" />
-          <div className="h-4 rounded-full bg-muted" />
-          <div className="h-4 rounded-full bg-muted" />
-          <div className="h-4 rounded-full bg-muted" />
-          <div className="h-4 rounded-full bg-muted" />
-        </div>
-      ))}
     </div>
   );
 }
