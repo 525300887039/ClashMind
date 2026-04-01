@@ -10,6 +10,7 @@ import {
 import { useStatsOverview } from "@/features/stats/hooks/use-stats";
 import { cn, formatBytes } from "@/lib/utils";
 import { DomainStats } from "./domain-stats";
+import { TrafficTimeline } from "./traffic-timeline";
 
 type StatsTab = "overview" | "domains" | "traffic" | "geo";
 
@@ -37,7 +38,7 @@ const STATS_TABS: {
   {
     id: "traffic",
     label: "流量",
-    description: "Step 2.8 趋势图",
+    description: "上传、下载与连接数趋势",
     icon: ChartColumnBig,
   },
   {
@@ -68,7 +69,7 @@ export function StatsPage() {
                 统计仪表板
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                聚合域名、流量与地理维度的数据采样。当前先交付域名面板，流量趋势和地理分布入口已预留到后续步骤。
+                聚合域名、流量与地理维度的数据采样。当前已接入域名分析和流量趋势，地理分布入口保留给后续步骤。
               </p>
             </div>
 
@@ -134,13 +135,7 @@ export function StatsPage() {
 
       {activeTab === "overview" && <StatsOverviewPanel />}
       {activeTab === "domains" && <DomainStats />}
-      {activeTab === "traffic" && (
-        <ComingSoonPanel
-          title="流量趋势页面待接入"
-          description="Step 2.8 会在这里接入小时级和日级趋势图，并复用同一套统计导航。"
-          badge="Flow Timeline"
-        />
-      )}
+      {activeTab === "traffic" && <TrafficTimeline />}
       {activeTab === "geo" && (
         <ComingSoonPanel
           title="地理分布页面待接入"

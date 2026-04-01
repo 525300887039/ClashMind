@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/tauri-api";
 
 const ONE_MINUTE = 60_000;
+const FIVE_MINUTES = 300_000;
 const STATS_ROOT_KEY = ["stats"] as const;
 
 export const STATS_KEYS = {
@@ -23,6 +24,26 @@ export function useDomainStats(days = 7, limit = 50) {
     staleTime: ONE_MINUTE,
     refetchInterval: ONE_MINUTE,
     placeholderData: (previousData) => previousData,
+  });
+}
+
+export function useTrafficHourly(start: string, end: string, enabled = true) {
+  return useQuery({
+    queryKey: STATS_KEYS.trafficHourly(start, end),
+    queryFn: () => api.stats.trafficHourly(start, end),
+    enabled,
+    staleTime: ONE_MINUTE,
+    refetchInterval: ONE_MINUTE,
+  });
+}
+
+export function useTrafficDaily(start: string, end: string, enabled = true) {
+  return useQuery({
+    queryKey: STATS_KEYS.trafficDaily(start, end),
+    queryFn: () => api.stats.trafficDaily(start, end),
+    enabled,
+    staleTime: FIVE_MINUTES,
+    refetchInterval: FIVE_MINUTES,
   });
 }
 
