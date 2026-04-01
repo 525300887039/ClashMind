@@ -1,7 +1,9 @@
+pub mod cleanup;
 pub mod migration;
 pub mod plugin;
 pub mod repo_connection;
 pub mod repo_domain;
+pub mod repo_geoip;
 pub mod repo_traffic;
 
 use serde::Serialize;

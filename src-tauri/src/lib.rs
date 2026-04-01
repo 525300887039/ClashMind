@@ -3,6 +3,7 @@ mod collector;
 mod core;
 mod db;
 mod tray;
+mod utils;
 
 use std::{future::Future, sync::Mutex};
 
@@ -11,6 +12,9 @@ use tauri::Manager;
 use cmd::MihomoState;
 use collector::{CollectorError, CollectorShutdown, CollectorState, RealtimeStore};
 use core::sidecar::SidecarState;
+use utils::geoip::{
+    default_mihomo_config_dir, resolve_country_mmdb_path, GeoIpConfigState, GeoIpLookup,
+};
 
 fn block_on<F: Future>(future: F) -> F::Output {
     if tokio::runtime::Handle::try_current().is_ok() {
@@ -38,6 +42,10 @@ pub fn run() {
             log_task: Mutex::new(None),
             traffic_task: Mutex::new(None),
         })
+        .manage(GeoIpConfigState::new(default_mihomo_config_dir()))
+        .manage(GeoIpLookup::new(resolve_country_mmdb_path(
+            &default_mihomo_config_dir(),
+        )))
         .manage(MihomoState {
             client: tokio::sync::Mutex::new(core::mihomo::MihomoClient::new(
                 "http://127.0.0.1:9090",
@@ -80,11 +88,15 @@ pub fn run() {
             cmd::stats::get_traffic_daily,
             cmd::stats::get_stats_overview,
             cmd::stats::get_rule_stats,
+            cmd::stats::get_geo_stats,
+            cmd::stats::manual_cleanup,
+            cmd::stats::get_db_stats,
         ])
         .setup(|app| {
             tracing_subscriber::fmt::init();
             tray::create_tray(app.handle())?;
             collector::start_aggregation_task(app.handle().clone());
+            collector::start_cleanup_task(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())

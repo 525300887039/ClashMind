@@ -1,6 +1,9 @@
 use tauri::AppHandle;
 
-use crate::core::sidecar::{self, SidecarError, SidecarState};
+use crate::{
+    core::sidecar::{self, SidecarError, SidecarState},
+    utils::geoip::GeoIpConfigState,
+};
 
 /// Abort old log/traffic tasks and start fresh subscriptions.
 /// Each mutex is locked only once: abort the old handle and store the new one
@@ -31,8 +34,10 @@ fn restart_subscriptions(app: AppHandle, state: &SidecarState) -> Result<(), Sid
 pub fn start_mihomo(
     app: AppHandle,
     state: tauri::State<'_, SidecarState>,
+    geoip_config: tauri::State<'_, GeoIpConfigState>,
     config_path: String,
 ) -> Result<(), SidecarError> {
+    geoip_config.set_config_dir(config_path.clone());
     sidecar::start(&app, &state, &config_path)?;
     restart_subscriptions(app, &state)
 }
@@ -46,8 +51,10 @@ pub fn stop_mihomo(state: tauri::State<'_, SidecarState>) -> Result<(), SidecarE
 pub fn restart_mihomo(
     app: AppHandle,
     state: tauri::State<'_, SidecarState>,
+    geoip_config: tauri::State<'_, GeoIpConfigState>,
     config_path: String,
 ) -> Result<(), SidecarError> {
+    geoip_config.set_config_dir(config_path.clone());
     sidecar::restart(&app, &state, &config_path)?;
     restart_subscriptions(app, &state)
 }
@@ -71,7 +78,11 @@ pub fn check_config_exists(config_path: String) -> Result<bool, SidecarError> {
 
 /// Create default config directory and config.yaml if they don't exist
 #[tauri::command]
-pub fn ensure_default_config(config_path: String) -> Result<(), SidecarError> {
+pub fn ensure_default_config(
+    geoip_config: tauri::State<'_, GeoIpConfigState>,
+    config_path: String,
+) -> Result<(), SidecarError> {
+    geoip_config.set_config_dir(config_path.clone());
     let dir = std::path::Path::new(&config_path);
     if !dir.exists() {
         std::fs::create_dir_all(dir).map_err(|e| SidecarError::SpawnFailed(e.to_string()))?;

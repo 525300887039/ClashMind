@@ -79,6 +79,13 @@ export interface RuleStat {
   download: number;
 }
 
+export interface GeoStat {
+  countryCode: string;
+  country: string;
+  connCount: number;
+  totalTraffic: number;
+}
+
 export const api = {
   mihomo: {
     start: (configPath: string) => invoke("start_mihomo", { configPath }),
@@ -114,6 +121,7 @@ export const api = {
     overview: (days: number) => invoke<StatsOverview>("get_stats_overview", { days }),
     rules: (days: number, limit: number) =>
       invoke<RuleStat[]>("get_rule_stats", { days, limit }),
+    geo: (days: number) => invoke<GeoStat[]>("get_geo_stats", { days }),
   },
   config: {
     read: (path: string) => invoke<string>("read_config", { path }),

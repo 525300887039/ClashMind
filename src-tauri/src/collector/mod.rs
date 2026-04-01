@@ -22,9 +22,9 @@ use tokio::{
     sync::watch,
     time::{self, MissedTickBehavior},
 };
-use tracing::warn;
+use tracing::{info, warn};
 
-use crate::db::{self, repo_traffic};
+use crate::db::{self, cleanup, repo_traffic};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum CollectorShutdown {
@@ -274,6 +274,33 @@ pub fn start_aggregation_task<R: Runtime>(app_handle: AppHandle<R>) {
                 Err(error) => {
                     warn!("traffic 日级聚合窗口计算失败: {error}");
                 }
+            }
+        }
+    });
+}
+
+/// Starts the background database cleanup scheduler without blocking the UI thread.
+pub fn start_cleanup_task<R: Runtime>(app_handle: AppHandle<R>) {
+    tauri::async_runtime::spawn(async move {
+        time::sleep(Duration::from_secs(60)).await;
+
+        let mut interval = time::interval(Duration::from_secs(6 * 3600));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+        loop {
+            interval.tick().await;
+
+            let db = match db::get_db_pool(&app_handle).await {
+                Ok(db) => db,
+                Err(error) => {
+                    warn!("数据清理任务获取数据库连接失败: {error}");
+                    continue;
+                }
+            };
+
+            match cleanup::run_full_cleanup(&db).await {
+                Ok(report) => info!("数据清理完成: {:?}", report),
+                Err(error) => warn!("数据清理失败: {error}"),
             }
         }
     });

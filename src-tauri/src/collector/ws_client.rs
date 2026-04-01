@@ -21,6 +21,7 @@ use crate::{
         self,
         repo_connection::{self, RuleStatsUpdate},
         repo_domain::DomainStatsUpdate,
+        repo_geoip::IpTrafficStatsUpdate,
         repo_traffic::TrafficSampleInsert,
         DbError,
     },
@@ -142,6 +143,7 @@ enum ConnectionLoopControl {
 
 type PendingDomainStats = HashMap<(String, String), DomainStatsUpdate>;
 type PendingRuleStats = HashMap<(String, String), RuleStatsUpdate>;
+type PendingIpTrafficStats = HashMap<(String, String), IpTrafficStatsUpdate>;
 type PendingObservationRecords = HashMap<String, ConnectionRecord>;
 type PendingTrafficSamples = Vec<TrafficSampleInsert>;
 type PendingCloseUpdates = HashMap<String, ClosedConnectionRecord>;
@@ -150,6 +152,7 @@ type PendingCloseUpdates = HashMap<String, ClosedConnectionRecord>;
 struct ObservationUpdates {
     domain_updates: Vec<DomainStatsUpdate>,
     rule_updates: Vec<RuleStatsUpdate>,
+    ip_traffic_updates: Vec<IpTrafficStatsUpdate>,
     traffic_samples: Vec<TrafficSampleInsert>,
 }
 
@@ -204,6 +207,7 @@ pub async fn run_connections_collector<R: Runtime>(
     let mut batch_buffer = BatchBuffer::new(DEFAULT_BATCH_CAPACITY, DEFAULT_FLUSH_INTERVAL);
     let mut pending_domain_stats = PendingDomainStats::new();
     let mut pending_rule_stats = PendingRuleStats::new();
+    let mut pending_ip_traffic_stats = PendingIpTrafficStats::new();
     let mut pending_observation_records = PendingObservationRecords::new();
     let mut pending_traffic_samples = PendingTrafficSamples::new();
     let mut pending_close_updates = PendingCloseUpdates::new();
@@ -252,6 +256,7 @@ pub async fn run_connections_collector<R: Runtime>(
                     &mut batch_buffer,
                     &mut pending_domain_stats,
                     &mut pending_rule_stats,
+                    &mut pending_ip_traffic_stats,
                     &mut pending_observation_records,
                     &mut pending_traffic_samples,
                     &mut pending_close_updates,
@@ -284,6 +289,7 @@ pub async fn run_connections_collector<R: Runtime>(
         &mut batch_buffer,
         &mut pending_domain_stats,
         &mut pending_rule_stats,
+        &mut pending_ip_traffic_stats,
         &mut pending_observation_records,
         &mut pending_traffic_samples,
         &mut pending_close_updates,
@@ -345,6 +351,7 @@ async fn collect_stream<R: Runtime>(
     batch_buffer: &mut BatchBuffer,
     pending_domain_stats: &mut PendingDomainStats,
     pending_rule_stats: &mut PendingRuleStats,
+    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
     pending_observation_records: &mut PendingObservationRecords,
     pending_traffic_samples: &mut PendingTrafficSamples,
     pending_close_updates: &mut PendingCloseUpdates,
@@ -376,6 +383,7 @@ async fn collect_stream<R: Runtime>(
                         batch_buffer,
                         pending_domain_stats,
                         pending_rule_stats,
+                        pending_ip_traffic_stats,
                         pending_observation_records,
                         pending_traffic_samples,
                         pending_close_updates,
@@ -400,6 +408,7 @@ async fn collect_stream<R: Runtime>(
                     batch_buffer,
                     pending_domain_stats,
                     pending_rule_stats,
+                    pending_ip_traffic_stats,
                     pending_observation_records,
                     pending_traffic_samples,
                     pending_close_updates,
@@ -418,6 +427,7 @@ async fn collect_stream<R: Runtime>(
                     batch_buffer,
                     pending_domain_stats,
                     pending_rule_stats,
+                    pending_ip_traffic_stats,
                     pending_observation_records,
                     pending_traffic_samples,
                     pending_close_updates,
@@ -438,6 +448,7 @@ async fn collect_stream<R: Runtime>(
                     batch_buffer,
                     pending_domain_stats,
                     pending_rule_stats,
+                    pending_ip_traffic_stats,
                     pending_observation_records,
                     pending_traffic_samples,
                     pending_close_updates,
@@ -457,6 +468,7 @@ async fn collect_stream<R: Runtime>(
                     batch_buffer,
                     pending_domain_stats,
                     pending_rule_stats,
+                    pending_ip_traffic_stats,
                     pending_observation_records,
                     pending_traffic_samples,
                     pending_close_updates,
@@ -479,6 +491,7 @@ async fn apply_snapshot<R: Runtime>(
     batch_buffer: &mut BatchBuffer,
     pending_domain_stats: &mut PendingDomainStats,
     pending_rule_stats: &mut PendingRuleStats,
+    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
     pending_observation_records: &mut PendingObservationRecords,
     pending_traffic_samples: &mut PendingTrafficSamples,
     pending_close_updates: &mut PendingCloseUpdates,
@@ -522,6 +535,7 @@ async fn apply_snapshot<R: Runtime>(
             batch_buffer,
             pending_domain_stats,
             pending_rule_stats,
+            pending_ip_traffic_stats,
             pending_observation_records,
             pending_traffic_samples,
             pending_close_updates,
@@ -543,6 +557,7 @@ async fn apply_snapshot<R: Runtime>(
             batch_buffer,
             pending_domain_stats,
             pending_rule_stats,
+            pending_ip_traffic_stats,
             pending_observation_records,
             pending_traffic_samples,
             pending_close_updates,
@@ -564,6 +579,7 @@ async fn apply_snapshot<R: Runtime>(
                 batch_buffer,
                 pending_domain_stats,
                 pending_rule_stats,
+                pending_ip_traffic_stats,
                 pending_observation_records,
                 pending_traffic_samples,
                 pending_close_updates,
@@ -746,6 +762,7 @@ async fn enqueue_record<R: Runtime>(
     batch_buffer: &mut BatchBuffer,
     pending_domain_stats: &mut PendingDomainStats,
     pending_rule_stats: &mut PendingRuleStats,
+    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
     pending_observation_records: &mut PendingObservationRecords,
     pending_traffic_samples: &mut PendingTrafficSamples,
     pending_close_updates: &mut PendingCloseUpdates,
@@ -761,6 +778,9 @@ async fn enqueue_record<R: Runtime>(
     for update in updates.rule_updates {
         merge_rule_update(pending_rule_stats, update);
     }
+    for update in updates.ip_traffic_updates {
+        merge_ip_traffic_update(pending_ip_traffic_stats, update);
+    }
     for sample in updates.traffic_samples {
         pending_traffic_samples.push(sample);
     }
@@ -772,6 +792,7 @@ async fn enqueue_record<R: Runtime>(
             records,
             pending_domain_stats,
             pending_rule_stats,
+            pending_ip_traffic_stats,
             pending_observation_records,
             pending_traffic_samples,
             pending_close_updates,
@@ -789,6 +810,7 @@ async fn flush_pending_state<R: Runtime>(
     batch_buffer: &mut BatchBuffer,
     pending_domain_stats: &mut PendingDomainStats,
     pending_rule_stats: &mut PendingRuleStats,
+    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
     pending_observation_records: &mut PendingObservationRecords,
     pending_traffic_samples: &mut PendingTrafficSamples,
     pending_close_updates: &mut PendingCloseUpdates,
@@ -801,6 +823,7 @@ async fn flush_pending_state<R: Runtime>(
         records,
         pending_domain_stats,
         pending_rule_stats,
+        pending_ip_traffic_stats,
         pending_observation_records,
         pending_traffic_samples,
         pending_close_updates,
@@ -815,6 +838,7 @@ async fn persist_drained_records<R: Runtime>(
     records: Vec<ConnectionRecord>,
     pending_domain_stats: &mut PendingDomainStats,
     pending_rule_stats: &mut PendingRuleStats,
+    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
     pending_observation_records: &mut PendingObservationRecords,
     pending_traffic_samples: &mut PendingTrafficSamples,
     pending_close_updates: &mut PendingCloseUpdates,
@@ -823,6 +847,7 @@ async fn persist_drained_records<R: Runtime>(
     if records.is_empty()
         && pending_domain_stats.is_empty()
         && pending_rule_stats.is_empty()
+        && pending_ip_traffic_stats.is_empty()
         && pending_observation_records.is_empty()
         && pending_traffic_samples.is_empty()
         && pending_close_updates.is_empty()
@@ -833,6 +858,7 @@ async fn persist_drained_records<R: Runtime>(
 
     let domain_updates = drain_domain_updates(pending_domain_stats);
     let rule_updates = drain_rule_updates(pending_rule_stats);
+    let ip_traffic_updates = drain_ip_traffic_updates(pending_ip_traffic_stats);
     let observation_records = drain_observation_records(pending_observation_records);
     let traffic_samples = drain_traffic_samples(pending_traffic_samples);
     let close_updates = drain_close_updates(pending_close_updates);
@@ -843,6 +869,7 @@ async fn persist_drained_records<R: Runtime>(
             batch_buffer.restore(records);
             restore_domain_updates(pending_domain_stats, domain_updates);
             restore_rule_updates(pending_rule_stats, rule_updates);
+            restore_ip_traffic_updates(pending_ip_traffic_stats, ip_traffic_updates);
             restore_observation_records(pending_observation_records, observation_records);
             restore_traffic_samples(pending_traffic_samples, traffic_samples);
             restore_close_updates(pending_close_updates, close_updates);
@@ -857,6 +884,7 @@ async fn persist_drained_records<R: Runtime>(
         &observation_records,
         &domain_updates,
         &rule_updates,
+        &ip_traffic_updates,
         &traffic_samples,
     )
     .await
@@ -864,6 +892,7 @@ async fn persist_drained_records<R: Runtime>(
         batch_buffer.restore(records);
         restore_domain_updates(pending_domain_stats, domain_updates);
         restore_rule_updates(pending_rule_stats, rule_updates);
+        restore_ip_traffic_updates(pending_ip_traffic_stats, ip_traffic_updates);
         restore_observation_records(pending_observation_records, observation_records);
         restore_traffic_samples(pending_traffic_samples, traffic_samples);
         restore_close_updates(pending_close_updates, close_updates);
@@ -954,10 +983,23 @@ fn build_observation_updates(
         previous_record,
         observed_at,
     );
+    let ip_traffic_updates = match current_record.dst_ip.as_deref().map(str::trim) {
+        Some(dst_ip) if !dst_ip.is_empty() => build_ip_traffic_stats_updates(
+            dst_ip,
+            upload,
+            download,
+            is_new_connection,
+            current_record,
+            previous_record,
+            observed_at,
+        ),
+        _ => Vec::new(),
+    };
 
     ObservationUpdates {
         domain_updates,
         rule_updates,
+        ip_traffic_updates,
         traffic_samples,
     }
 }
@@ -1042,6 +1084,48 @@ fn build_rule_stats_updates(
             rule: rule.to_string(),
             day: bucket.key,
             hit_count,
+            upload,
+            download,
+        });
+    }
+
+    updates
+}
+
+fn build_ip_traffic_stats_updates(
+    dst_ip: &str,
+    upload: i64,
+    download: i64,
+    is_new_connection: bool,
+    current_record: &ConnectionRecord,
+    previous_record: Option<&ConnectionRecord>,
+    observed_at: &str,
+) -> Vec<IpTrafficStatsUpdate> {
+    if !is_new_connection && upload == 0 && download == 0 {
+        return Vec::new();
+    }
+
+    if upload == 0 && download == 0 {
+        return Vec::new();
+    }
+
+    let (start, end) = observation_window(current_record, previous_record, observed_at);
+    let buckets = build_day_buckets(start, end);
+    let uploads = distribute_total(upload, &buckets);
+    let downloads = distribute_total(download, &buckets);
+    let mut updates = Vec::with_capacity(buckets.len());
+
+    for (index, bucket) in buckets.into_iter().enumerate() {
+        let upload = uploads.get(index).copied().unwrap_or(0);
+        let download = downloads.get(index).copied().unwrap_or(0);
+
+        if upload == 0 && download == 0 {
+            continue;
+        }
+
+        updates.push(IpTrafficStatsUpdate {
+            dst_ip: dst_ip.to_string(),
+            day: bucket.key,
             upload,
             download,
         });
@@ -1269,6 +1353,20 @@ fn merge_rule_update(pending_rule_stats: &mut PendingRuleStats, update: RuleStat
     }
 }
 
+fn merge_ip_traffic_update(
+    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
+    update: IpTrafficStatsUpdate,
+) {
+    let key = (update.dst_ip.clone(), update.day.clone());
+
+    if let Some(existing) = pending_ip_traffic_stats.get_mut(&key) {
+        existing.upload += update.upload;
+        existing.download += update.download;
+    } else {
+        pending_ip_traffic_stats.insert(key, update);
+    }
+}
+
 fn drain_domain_updates(pending_domain_stats: &mut PendingDomainStats) -> Vec<DomainStatsUpdate> {
     pending_domain_stats
         .drain()
@@ -1295,6 +1393,24 @@ fn restore_domain_updates(
 fn restore_rule_updates(pending_rule_stats: &mut PendingRuleStats, updates: Vec<RuleStatsUpdate>) {
     for update in updates {
         merge_rule_update(pending_rule_stats, update);
+    }
+}
+
+fn drain_ip_traffic_updates(
+    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
+) -> Vec<IpTrafficStatsUpdate> {
+    pending_ip_traffic_stats
+        .drain()
+        .map(|(_, update)| update)
+        .collect()
+}
+
+fn restore_ip_traffic_updates(
+    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
+    updates: Vec<IpTrafficStatsUpdate>,
+) {
+    for update in updates {
+        merge_ip_traffic_update(pending_ip_traffic_stats, update);
     }
 }
 
@@ -1488,6 +1604,11 @@ mod tests {
         assert_eq!(updates.rule_updates[0].hit_count, 0);
         assert_eq!(updates.rule_updates[0].upload, 6);
         assert_eq!(updates.rule_updates[0].download, 4);
+        assert_eq!(updates.ip_traffic_updates.len(), 1);
+        assert_eq!(updates.ip_traffic_updates[0].dst_ip, "1.1.1.1");
+        assert_eq!(updates.ip_traffic_updates[0].day, "2026-03-30");
+        assert_eq!(updates.ip_traffic_updates[0].upload, 6);
+        assert_eq!(updates.ip_traffic_updates[0].download, 4);
         assert_eq!(updates.traffic_samples.len(), 1);
         assert_eq!(updates.traffic_samples[0].ts, "2026-03-30T10:00:00Z");
         assert_eq!(updates.traffic_samples[0].upload, 6);
@@ -1533,6 +1654,9 @@ mod tests {
         assert_eq!(updates.rule_updates.len(), 2);
         assert_eq!(updates.rule_updates[0].day, "2026-03-30");
         assert_eq!(updates.rule_updates[1].day, "2026-03-31");
+        assert_eq!(updates.ip_traffic_updates.len(), 2);
+        assert_eq!(updates.ip_traffic_updates[0].day, "2026-03-30");
+        assert_eq!(updates.ip_traffic_updates[1].day, "2026-03-31");
     }
 
     #[test]
@@ -1565,6 +1689,11 @@ mod tests {
         assert_eq!(updates.rule_updates.len(), 1);
         assert_eq!(updates.rule_updates[0].rule, "DOMAIN-SUFFIX");
         assert_eq!(updates.rule_updates[0].hit_count, 1);
+        assert_eq!(updates.ip_traffic_updates.len(), 1);
+        assert_eq!(updates.ip_traffic_updates[0].dst_ip, "1.1.1.1");
+        assert_eq!(updates.ip_traffic_updates[0].day, "2026-03-31");
+        assert_eq!(updates.ip_traffic_updates[0].upload, 24);
+        assert_eq!(updates.ip_traffic_updates[0].download, 12);
     }
 
     #[test]

@@ -37,3 +37,4 @@ sysproxy = "0.3"
 dirs = "6"
 urlencoding = "2"
 chrono = { version = "0.4", features = ["serde"] }
+maxminddb = "0.24"

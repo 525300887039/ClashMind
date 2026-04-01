@@ -15,6 +15,7 @@ export const STATS_KEYS = {
     [...STATS_ROOT_KEY, "traffic-daily", start, end] as const,
   overview: (days: number) =>
     [...STATS_ROOT_KEY, "overview", days] as const,
+  geo: (days: number) => [...STATS_ROOT_KEY, "geo", days] as const,
 } as const;
 
 export function useDomainStats(days = 7, limit = 50) {
@@ -51,6 +52,16 @@ export function useStatsOverview(days = 7) {
   return useQuery({
     queryKey: STATS_KEYS.overview(days),
     queryFn: () => api.stats.overview(days),
+    staleTime: ONE_MINUTE,
+    refetchInterval: ONE_MINUTE,
+    placeholderData: (previousData) => previousData,
+  });
+}
+
+export function useGeoStats(days = 7) {
+  return useQuery({
+    queryKey: STATS_KEYS.geo(days),
+    queryFn: () => api.stats.geo(days),
     staleTime: ONE_MINUTE,
     refetchInterval: ONE_MINUTE,
     placeholderData: (previousData) => previousData,

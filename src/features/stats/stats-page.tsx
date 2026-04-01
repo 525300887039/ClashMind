@@ -10,6 +10,7 @@ import {
 import { useStatsOverview } from "@/features/stats/hooks/use-stats";
 import { cn, formatBytes } from "@/lib/utils";
 import { DomainStats } from "./domain-stats";
+import { GeoMap } from "./geo-map";
 import { TrafficTimeline } from "./traffic-timeline";
 
 type StatsTab = "overview" | "domains" | "traffic" | "geo";
@@ -44,7 +45,7 @@ const STATS_TABS: {
   {
     id: "geo",
     label: "地理",
-    description: "Step 2.9 地理分布",
+    description: "按国家查看连接热区",
     icon: MapPinned,
   },
 ];
@@ -69,7 +70,7 @@ export function StatsPage() {
                 统计仪表板
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                聚合域名、流量与地理维度的数据采样。当前已接入域名分析和流量趋势，地理分布入口保留给后续步骤。
+                聚合域名、流量与地理维度的数据采样。当前已接入域名分析、流量趋势和地理分布，可以从同一窗口快速定位带宽热点。
               </p>
             </div>
 
@@ -136,13 +137,7 @@ export function StatsPage() {
       {activeTab === "overview" && <StatsOverviewPanel />}
       {activeTab === "domains" && <DomainStats />}
       {activeTab === "traffic" && <TrafficTimeline />}
-      {activeTab === "geo" && (
-        <ComingSoonPanel
-          title="地理分布页面待接入"
-          description="Step 2.9 会在这里接入 GeoIP 地图和地域排行，并保持与统计页统一的视觉样式。"
-          badge="Geo Distribution"
-        />
-      )}
+      {activeTab === "geo" && <GeoMap />}
     </section>
   );
 }
@@ -322,31 +317,6 @@ function InsightRow({
         <span className="text-sm font-semibold text-primary">{value}</span>
       </div>
       <p className="mt-2 text-sm text-muted-foreground">{description}</p>
-    </div>
-  );
-}
-
-function ComingSoonPanel({
-  title,
-  description,
-  badge,
-}: {
-  title: string;
-  description: string;
-  badge: string;
-}) {
-  return (
-    <div className="relative overflow-hidden rounded-[2rem] border border-border/70 bg-background/95 p-8 shadow-[0_28px_100px_-45px_rgba(15,23,42,0.55)]">
-      <div className="pointer-events-none absolute inset-y-0 right-0 w-56 bg-linear-to-l from-primary/10 to-transparent" />
-      <div className="relative max-w-2xl">
-        <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/10 px-3 py-1 text-xs font-medium tracking-[0.18em] text-primary uppercase">
-          {badge}
-        </div>
-        <h2 className="mt-4 text-2xl font-semibold tracking-tight text-foreground">
-          {title}
-        </h2>
-        <p className="mt-3 text-sm leading-6 text-muted-foreground">{description}</p>
-      </div>
     </div>
   );
 }

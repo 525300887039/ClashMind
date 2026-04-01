@@ -162,6 +162,24 @@ WHERE close_time IS NULL;
 "#,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 10,
+            description: "create_ip_traffic_daily_table",
+            sql: r#"
+CREATE TABLE IF NOT EXISTS ip_traffic_daily (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    dst_ip   TEXT NOT NULL,
+    day      TEXT NOT NULL,
+    upload   INTEGER NOT NULL DEFAULT 0,
+    download INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(dst_ip, day)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ip_traffic_daily_day ON ip_traffic_daily(day);
+CREATE INDEX IF NOT EXISTS idx_ip_traffic_daily_dst_ip ON ip_traffic_daily(dst_ip);
+"#,
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

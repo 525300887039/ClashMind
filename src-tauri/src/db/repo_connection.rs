@@ -7,6 +7,7 @@ use crate::collector::ws_client::ConnectionRecord;
 
 use super::{
     repo_domain::{self, DomainStatsUpdate},
+    repo_geoip::{self, IpTrafficStatsUpdate},
     repo_traffic::{self, TrafficSampleInsert},
     sqlite_pool, DbError,
 };
@@ -26,6 +27,13 @@ pub(crate) struct RuleStatRow {
     pub hit_count: i64,
     pub upload: i64,
     pub download: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GeoIpTrafficRow {
+    pub dst_ip: String,
+    pub conn_count: i64,
+    pub total_traffic: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -327,6 +335,70 @@ LIMIT ?;
     Ok(rules)
 }
 
+pub(crate) async fn query_geo_traffic_by_ip(
+    db: &DbPool,
+    days: i32,
+) -> Result<Vec<GeoIpTrafficRow>, DbError> {
+    let pool = sqlite_pool(db)?;
+    let rows = sqlx::query(
+        r#"
+WITH connection_counts AS (
+    SELECT
+        dst_ip,
+        COUNT(*) AS conn_count
+    FROM connections
+    WHERE dst_ip IS NOT NULL
+      AND TRIM(dst_ip) <> ''
+      AND date(COALESCE(close_time, last_observed_at, start_time)) >= date('now', '-' || ? || ' days')
+    GROUP BY dst_ip
+),
+traffic_totals AS (
+    SELECT
+        dst_ip,
+        COALESCE(SUM(upload + download), 0) AS total_traffic
+    FROM ip_traffic_daily
+    WHERE date(day) >= date('now', '-' || ? || ' days')
+    GROUP BY dst_ip
+),
+ip_keys AS (
+    SELECT dst_ip FROM connection_counts
+    UNION
+    SELECT dst_ip FROM traffic_totals
+)
+SELECT
+    ip_keys.dst_ip AS dst_ip,
+    COALESCE(connection_counts.conn_count, 0) AS conn_count,
+    COALESCE(traffic_totals.total_traffic, 0) AS total_traffic
+FROM ip_keys
+LEFT JOIN connection_counts ON connection_counts.dst_ip = ip_keys.dst_ip
+LEFT JOIN traffic_totals ON traffic_totals.dst_ip = ip_keys.dst_ip
+ORDER BY total_traffic DESC, conn_count DESC, dst_ip ASC;
+"#,
+    )
+    .bind(i64::from(days.max(0)))
+    .bind(i64::from(days.max(0)))
+    .fetch_all(pool)
+    .await
+    .map_err(|error| DbError::QueryFailed(format!("查询 GeoIP 统计候选失败: {error}")))?;
+
+    let mut stats = Vec::with_capacity(rows.len());
+    for row in rows {
+        stats.push(GeoIpTrafficRow {
+            dst_ip: row
+                .try_get("dst_ip")
+                .map_err(|error| DbError::QueryFailed(format!("读取 dst_ip 失败: {error}")))?,
+            conn_count: row.try_get("conn_count").map_err(|error| {
+                DbError::QueryFailed(format!("读取 GeoIP 统计 conn_count 失败: {error}"))
+            })?,
+            total_traffic: row.try_get("total_traffic").map_err(|error| {
+                DbError::QueryFailed(format!("读取 GeoIP 统计 total_traffic 失败: {error}"))
+            })?,
+        });
+    }
+
+    Ok(stats)
+}
+
 pub(crate) async fn batch_upsert_rule_stats_in_tx(
     transaction: &mut Transaction<'_, Sqlite>,
     updates: &[RuleStatsUpdate],
@@ -371,12 +443,14 @@ pub(crate) async fn persist_connection_batch(
     observation_records: &[ConnectionRecord],
     domain_updates: &[DomainStatsUpdate],
     rule_updates: &[RuleStatsUpdate],
+    ip_traffic_updates: &[IpTrafficStatsUpdate],
     traffic_samples: &[TrafficSampleInsert],
 ) -> Result<(), DbError> {
     if records.is_empty()
         && observation_records.is_empty()
         && domain_updates.is_empty()
         && rule_updates.is_empty()
+        && ip_traffic_updates.is_empty()
         && traffic_samples.is_empty()
     {
         return Ok(());
@@ -392,6 +466,7 @@ pub(crate) async fn persist_connection_batch(
     batch_update_last_observed_at_in_tx(&mut transaction, observation_records).await?;
     repo_domain::batch_upsert_domain_stats_in_tx(&mut transaction, domain_updates).await?;
     batch_upsert_rule_stats_in_tx(&mut transaction, rule_updates).await?;
+    repo_geoip::batch_upsert_ip_traffic_stats_in_tx(&mut transaction, ip_traffic_updates).await?;
     repo_traffic::batch_insert_traffic_samples_in_tx(&mut transaction, traffic_samples).await?;
     repo_traffic::aggregate_samples_in_tx(&mut transaction, traffic_samples).await?;
     transaction
@@ -557,6 +632,15 @@ CREATE TABLE rule_stats (
     upload     INTEGER NOT NULL DEFAULT 0,
     download   INTEGER NOT NULL DEFAULT 0,
     UNIQUE(rule, day)
+);
+
+CREATE TABLE ip_traffic_daily (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    dst_ip   TEXT NOT NULL,
+    day      TEXT NOT NULL,
+    upload   INTEGER NOT NULL DEFAULT 0,
+    download INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(dst_ip, day)
 );
 "#,
         )
@@ -745,6 +829,145 @@ INSERT INTO rule_stats (rule, day, hit_count, upload, download) VALUES
         assert_eq!(rules[0].rule, "MATCH");
         assert_eq!(rules[0].hit_count, 2);
         assert_eq!(rules[1].rule, "DOMAIN-SUFFIX");
+    }
+
+    #[tokio::test]
+    async fn query_geo_traffic_by_ip_groups_connections_by_destination_ip() {
+        let db = prepare_db().await;
+        assert!(db.is_ok());
+        let Ok(db) = db else {
+            panic!("test database should be created");
+        };
+
+        let pool = sqlite_pool(&db);
+        assert!(pool.is_ok());
+        let Ok(pool) = pool else {
+            panic!("sqlite pool should be available");
+        };
+
+        let insert = sqlx::query(
+            r#"
+INSERT INTO connections (
+    id, host, dst_ip, network, conn_type, rule, proxy_chain, upload, download, start_time, close_time, last_observed_at
+) VALUES
+    (
+        'conn-geo-1',
+        'alpha.example',
+        '1.1.1.1',
+        'tcp',
+        'HTTPS',
+        'MATCH',
+        '["DIRECT"]',
+        100,
+        200,
+        strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', '-2 hours')),
+        NULL,
+        strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now'))
+    ),
+    (
+        'conn-geo-2',
+        'beta.example',
+        '1.1.1.1',
+        'tcp',
+        'HTTPS',
+        'MATCH',
+        '["DIRECT"]',
+        50,
+        25,
+        strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', '-1 hours')),
+        strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now')),
+        strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now'))
+    ),
+    (
+        'conn-geo-3',
+        'gamma.example',
+        '8.8.8.8',
+        'tcp',
+        'HTTPS',
+        'MATCH',
+        '["DIRECT"]',
+        10,
+        15,
+        strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', '-30 minutes')),
+        NULL,
+        strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now'))
+    );
+
+INSERT INTO ip_traffic_daily (dst_ip, day, upload, download) VALUES
+    ('1.1.1.1', date('now'), 15, 25),
+    ('1.1.1.1', date('now', '-1 day'), 20, 30),
+    ('8.8.8.8', date('now'), 4, 6);
+"#,
+        )
+        .execute(pool)
+        .await;
+        assert!(insert.is_ok());
+
+        let rows = query_geo_traffic_by_ip(&db, 1).await;
+        assert!(rows.is_ok());
+        let Ok(rows) = rows else {
+            panic!("GeoIP traffic candidates should be queryable");
+        };
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].dst_ip, "1.1.1.1");
+        assert_eq!(rows[0].conn_count, 2);
+        assert_eq!(rows[0].total_traffic, 90);
+        assert_eq!(rows[1].dst_ip, "8.8.8.8");
+        assert_eq!(rows[1].total_traffic, 10);
+    }
+
+    #[tokio::test]
+    async fn query_geo_traffic_by_ip_avoids_overcounting_long_lived_connection_totals() {
+        let db = prepare_db().await;
+        assert!(db.is_ok());
+        let Ok(db) = db else {
+            panic!("test database should be created");
+        };
+
+        let pool = sqlite_pool(&db);
+        assert!(pool.is_ok());
+        let Ok(pool) = pool else {
+            panic!("sqlite pool should be available");
+        };
+
+        let insert = sqlx::query(
+            r#"
+INSERT INTO connections (
+    id, host, dst_ip, network, conn_type, rule, proxy_chain, upload, download, start_time, close_time, last_observed_at
+) VALUES (
+    'long-lived-conn',
+    'stream.example',
+    '9.9.9.9',
+    'tcp',
+    'HTTPS',
+    'MATCH',
+    '["DIRECT"]',
+    900,
+    1100,
+    strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', '-30 days')),
+    NULL,
+    strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now'))
+);
+
+INSERT INTO ip_traffic_daily (dst_ip, day, upload, download) VALUES
+    ('9.9.9.9', date('now'), 12, 18);
+"#,
+        )
+        .execute(pool)
+        .await;
+        assert!(insert.is_ok());
+
+        let rows = query_geo_traffic_by_ip(&db, 0).await;
+        assert!(rows.is_ok());
+        let Ok(rows) = rows else {
+            panic!("GeoIP traffic candidates should be queryable");
+        };
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].dst_ip, "9.9.9.9");
+        assert_eq!(rows[0].conn_count, 1);
+        assert_eq!(rows[0].total_traffic, 30);
     }
 
     #[tokio::test]
