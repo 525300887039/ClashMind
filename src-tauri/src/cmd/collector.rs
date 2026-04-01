@@ -88,14 +88,14 @@ pub async fn get_collector_status(
 #[tauri::command]
 pub async fn get_realtime_connections(
     store: tauri::State<'_, RealtimeStore>,
-) -> Result<Vec<ConnectionRecord>, String> {
+) -> Result<Vec<ConnectionRecord>, CollectorError> {
     Ok(store.get_active_connections().await)
 }
 
 #[tauri::command]
 pub async fn get_realtime_summary(
     store: tauri::State<'_, RealtimeStore>,
-) -> Result<RealtimeSummary, String> {
+) -> Result<RealtimeSummary, CollectorError> {
     Ok(store.get_summary().await)
 }
 

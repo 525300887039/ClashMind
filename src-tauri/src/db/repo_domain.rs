@@ -1,7 +1,7 @@
 use sqlx::{Row, Sqlite, Transaction};
 use tauri_plugin_sql::DbPool;
 
-use super::{sqlite_pool, DbError};
+use super::{sqlite_pool, try_col, DbError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DomainStatsUpdate {
@@ -87,18 +87,10 @@ LIMIT ?;
     let mut domains = Vec::with_capacity(rows.len());
     for row in rows {
         domains.push(TopDomainRow {
-            domain: row.try_get("domain").map_err(|error| {
-                DbError::QueryFailed(format!("读取域名统计 domain 失败: {error}"))
-            })?,
-            hit_count: row.try_get("hit_count").map_err(|error| {
-                DbError::QueryFailed(format!("读取域名统计 hit_count 失败: {error}"))
-            })?,
-            upload: row.try_get("upload").map_err(|error| {
-                DbError::QueryFailed(format!("读取域名统计 upload 失败: {error}"))
-            })?,
-            download: row.try_get("download").map_err(|error| {
-                DbError::QueryFailed(format!("读取域名统计 download 失败: {error}"))
-            })?,
+            domain: try_col!(row, "domain", "域名统计"),
+            hit_count: try_col!(row, "hit_count", "域名统计"),
+            upload: try_col!(row, "upload", "域名统计"),
+            download: try_col!(row, "download", "域名统计"),
         });
     }
 

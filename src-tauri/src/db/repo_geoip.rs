@@ -5,7 +5,7 @@ use tauri_plugin_sql::DbPool;
 
 use crate::utils::geoip::GeoLocation;
 
-use super::{sqlite_pool, DbError};
+use super::{sqlite_pool, try_col, DbError};
 
 const SQLITE_IP_CACHE_QUERY_CHUNK_SIZE: usize = 500;
 
@@ -46,24 +46,12 @@ pub async fn get_cached_geos(
 
         for row in rows {
             let geo = GeoLocation {
-                ip: row.try_get("ip").map_err(|error| {
-                    DbError::QueryFailed(format!("读取批量 GeoIP 缓存 ip 失败: {error}"))
-                })?,
-                country: row.try_get("country").map_err(|error| {
-                    DbError::QueryFailed(format!("读取批量 GeoIP 缓存 country 失败: {error}"))
-                })?,
-                country_code: row.try_get("country_code").map_err(|error| {
-                    DbError::QueryFailed(format!("读取批量 GeoIP 缓存 country_code 失败: {error}"))
-                })?,
-                city: row.try_get("city").map_err(|error| {
-                    DbError::QueryFailed(format!("读取批量 GeoIP 缓存 city 失败: {error}"))
-                })?,
-                latitude: row.try_get("latitude").map_err(|error| {
-                    DbError::QueryFailed(format!("读取批量 GeoIP 缓存 latitude 失败: {error}"))
-                })?,
-                longitude: row.try_get("longitude").map_err(|error| {
-                    DbError::QueryFailed(format!("读取批量 GeoIP 缓存 longitude 失败: {error}"))
-                })?,
+                ip: try_col!(row, "ip", "批量 GeoIP 缓存"),
+                country: try_col!(row, "country", "批量 GeoIP 缓存"),
+                country_code: try_col!(row, "country_code", "批量 GeoIP 缓存"),
+                city: try_col!(row, "city", "批量 GeoIP 缓存"),
+                latitude: try_col!(row, "latitude", "批量 GeoIP 缓存"),
+                longitude: try_col!(row, "longitude", "批量 GeoIP 缓存"),
             };
             cached_geos.insert(geo.ip.clone(), geo);
         }

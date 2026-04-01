@@ -26,7 +26,6 @@ pub enum DbError {
     WriteFailed(String),
     #[error("时间窗口无效: {0}")]
     InvalidTimeWindow(String),
-    #[allow(dead_code)]
     #[error("数据库查询失败: {0}")]
     QueryFailed(String),
 }
@@ -61,3 +60,18 @@ pub(crate) fn sqlite_pool(db: &DbPool) -> Result<&SqlitePool, DbError> {
         _ => Err(DbError::UnsupportedDriver(DATABASE_URL.to_string())),
     }
 }
+
+macro_rules! try_col {
+    ($row:expr, $col:literal) => {
+        $row.try_get($col).map_err(|error| {
+            $crate::db::DbError::QueryFailed(format!("读取列 {} 失败: {error}", $col))
+        })?
+    };
+    ($row:expr, $col:literal, $ctx:literal) => {
+        $row.try_get($col).map_err(|error| {
+            $crate::db::DbError::QueryFailed(format!("读取{} {} 失败: {error}", $ctx, $col))
+        })?
+    };
+}
+
+pub(crate) use try_col;

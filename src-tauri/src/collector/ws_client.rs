@@ -1,6 +1,6 @@
 use std::{collections::HashMap, time::Duration};
 
-use chrono::{DateTime, Duration as ChronoDuration, DurationRound, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -19,12 +19,13 @@ use crate::{
     },
     db::{
         self,
-        repo_connection::{self, RuleStatsUpdate},
+        repo_connection::{self, BatchPersistPayload, RuleStatsUpdate},
         repo_domain::DomainStatsUpdate,
         repo_geoip::IpTrafficStatsUpdate,
         repo_traffic::TrafficSampleInsert,
         DbError,
     },
+    utils::time as time_utils,
 };
 
 use super::{CollectorError, CollectorShutdown};
@@ -148,6 +149,149 @@ type PendingObservationRecords = HashMap<String, ConnectionRecord>;
 type PendingTrafficSamples = Vec<TrafficSampleInsert>;
 type PendingCloseUpdates = HashMap<String, ClosedConnectionRecord>;
 
+fn merge_into<K, V>(map: &mut HashMap<K, V>, key: K, value: V, merge_fn: impl FnOnce(&mut V, V))
+where
+    K: Eq + std::hash::Hash,
+{
+    match map.entry(key) {
+        std::collections::hash_map::Entry::Occupied(mut entry) => {
+            merge_fn(entry.get_mut(), value);
+        }
+        std::collections::hash_map::Entry::Vacant(entry) => {
+            entry.insert(value);
+        }
+    }
+}
+
+fn merge_domain_stats(existing: &mut DomainStatsUpdate, incoming: DomainStatsUpdate) {
+    existing.hit_count += incoming.hit_count;
+    existing.upload += incoming.upload;
+    existing.download += incoming.download;
+}
+
+fn merge_rule_stats(existing: &mut RuleStatsUpdate, incoming: RuleStatsUpdate) {
+    existing.hit_count += incoming.hit_count;
+    existing.upload += incoming.upload;
+    existing.download += incoming.download;
+}
+
+fn merge_ip_traffic_stats(existing: &mut IpTrafficStatsUpdate, incoming: IpTrafficStatsUpdate) {
+    existing.upload += incoming.upload;
+    existing.download += incoming.download;
+}
+
+struct PendingFlushState {
+    batch_buffer: BatchBuffer,
+    domain_stats: PendingDomainStats,
+    rule_stats: PendingRuleStats,
+    ip_traffic_stats: PendingIpTrafficStats,
+    observation_records: PendingObservationRecords,
+    traffic_samples: PendingTrafficSamples,
+    close_updates: PendingCloseUpdates,
+    retry_flush: bool,
+}
+
+struct DrainedState {
+    domain_updates: Vec<DomainStatsUpdate>,
+    rule_updates: Vec<RuleStatsUpdate>,
+    ip_traffic_updates: Vec<IpTrafficStatsUpdate>,
+    observation_records: Vec<ConnectionRecord>,
+    traffic_samples: Vec<TrafficSampleInsert>,
+    close_updates: Vec<ClosedConnectionRecord>,
+}
+
+impl PendingFlushState {
+    fn new() -> Self {
+        Self {
+            batch_buffer: BatchBuffer::new(DEFAULT_BATCH_CAPACITY, DEFAULT_FLUSH_INTERVAL),
+            domain_stats: PendingDomainStats::new(),
+            rule_stats: PendingRuleStats::new(),
+            ip_traffic_stats: PendingIpTrafficStats::new(),
+            observation_records: PendingObservationRecords::new(),
+            traffic_samples: PendingTrafficSamples::new(),
+            close_updates: PendingCloseUpdates::new(),
+            retry_flush: false,
+        }
+    }
+
+    fn should_flush(&self) -> bool {
+        self.retry_flush
+            || self.batch_buffer.should_flush()
+            || (!self.observation_records.is_empty() && self.batch_buffer.flush_due())
+            || (!self.close_updates.is_empty() && self.batch_buffer.flush_due())
+    }
+
+    fn is_all_empty(&self) -> bool {
+        self.domain_stats.is_empty()
+            && self.rule_stats.is_empty()
+            && self.ip_traffic_stats.is_empty()
+            && self.observation_records.is_empty()
+            && self.traffic_samples.is_empty()
+            && self.close_updates.is_empty()
+    }
+
+    fn enqueue_updates(&mut self, updates: ObservationUpdates, record_id: &str) {
+        self.observation_records.remove(record_id);
+
+        for update in updates.domain_updates {
+            let key = (update.domain.clone(), update.day.clone());
+            merge_into(&mut self.domain_stats, key, update, merge_domain_stats);
+        }
+        for update in updates.rule_updates {
+            let key = (update.rule.clone(), update.day.clone());
+            merge_into(&mut self.rule_stats, key, update, merge_rule_stats);
+        }
+        for update in updates.ip_traffic_updates {
+            let key = (update.dst_ip.clone(), update.day.clone());
+            merge_into(
+                &mut self.ip_traffic_stats,
+                key,
+                update,
+                merge_ip_traffic_stats,
+            );
+        }
+        self.traffic_samples.extend(updates.traffic_samples);
+    }
+
+    fn drain_all(&mut self) -> DrainedState {
+        DrainedState {
+            domain_updates: self.domain_stats.drain().map(|(_, v)| v).collect(),
+            rule_updates: self.rule_stats.drain().map(|(_, v)| v).collect(),
+            ip_traffic_updates: self.ip_traffic_stats.drain().map(|(_, v)| v).collect(),
+            observation_records: self.observation_records.drain().map(|(_, v)| v).collect(),
+            traffic_samples: std::mem::take(&mut self.traffic_samples),
+            close_updates: self.close_updates.drain().map(|(_, v)| v).collect(),
+        }
+    }
+
+    fn restore_all(&mut self, drained: DrainedState) {
+        for update in drained.domain_updates {
+            let key = (update.domain.clone(), update.day.clone());
+            merge_into(&mut self.domain_stats, key, update, merge_domain_stats);
+        }
+        for update in drained.rule_updates {
+            let key = (update.rule.clone(), update.day.clone());
+            merge_into(&mut self.rule_stats, key, update, merge_rule_stats);
+        }
+        for update in drained.ip_traffic_updates {
+            let key = (update.dst_ip.clone(), update.day.clone());
+            merge_into(
+                &mut self.ip_traffic_stats,
+                key,
+                update,
+                merge_ip_traffic_stats,
+            );
+        }
+        for record in drained.observation_records {
+            self.observation_records.insert(record.id.clone(), record);
+        }
+        self.traffic_samples.extend(drained.traffic_samples);
+        for update in drained.close_updates {
+            self.close_updates.insert(update.id.clone(), update);
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct ObservationUpdates {
     domain_updates: Vec<DomainStatsUpdate>,
@@ -204,14 +348,7 @@ pub async fn run_connections_collector<R: Runtime>(
             HashMap::new()
         }
     };
-    let mut batch_buffer = BatchBuffer::new(DEFAULT_BATCH_CAPACITY, DEFAULT_FLUSH_INTERVAL);
-    let mut pending_domain_stats = PendingDomainStats::new();
-    let mut pending_rule_stats = PendingRuleStats::new();
-    let mut pending_ip_traffic_stats = PendingIpTrafficStats::new();
-    let mut pending_observation_records = PendingObservationRecords::new();
-    let mut pending_traffic_samples = PendingTrafficSamples::new();
-    let mut pending_close_updates = PendingCloseUpdates::new();
-    let mut retry_pending_flush = false;
+    let mut pending = PendingFlushState::new();
     let mut retry_delay = INITIAL_RETRY_DELAY;
 
     loop {
@@ -253,14 +390,7 @@ pub async fn run_connections_collector<R: Runtime>(
                     &app_handle,
                     websocket,
                     &mut previous_connections,
-                    &mut batch_buffer,
-                    &mut pending_domain_stats,
-                    &mut pending_rule_stats,
-                    &mut pending_ip_traffic_stats,
-                    &mut pending_observation_records,
-                    &mut pending_traffic_samples,
-                    &mut pending_close_updates,
-                    &mut retry_pending_flush,
+                    &mut pending,
                     &mut shutdown_rx,
                 )
                 .await
@@ -281,22 +411,10 @@ pub async fn run_connections_collector<R: Runtime>(
     }
 
     if current_shutdown(&shutdown_rx).should_close_active() {
-        collect_active_connection_closes(&mut previous_connections, &mut pending_close_updates);
+        collect_active_connection_closes(&mut previous_connections, &mut pending.close_updates);
     }
 
-    if let Err(error) = flush_pending_state(
-        &app_handle,
-        &mut batch_buffer,
-        &mut pending_domain_stats,
-        &mut pending_rule_stats,
-        &mut pending_ip_traffic_stats,
-        &mut pending_observation_records,
-        &mut pending_traffic_samples,
-        &mut pending_close_updates,
-        &mut retry_pending_flush,
-    )
-    .await
-    {
+    if let Err(error) = flush_pending_state(&app_handle, &mut pending).await {
         warn!("collector 停止前 flush 失败: {error}");
     }
 
@@ -348,14 +466,7 @@ async fn collect_stream<R: Runtime>(
     app_handle: &AppHandle<R>,
     websocket: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
     previous_connections: &mut HashMap<String, ConnectionRecord>,
-    batch_buffer: &mut BatchBuffer,
-    pending_domain_stats: &mut PendingDomainStats,
-    pending_rule_stats: &mut PendingRuleStats,
-    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
-    pending_observation_records: &mut PendingObservationRecords,
-    pending_traffic_samples: &mut PendingTrafficSamples,
-    pending_close_updates: &mut PendingCloseUpdates,
-    retry_pending_flush: &mut bool,
+    state: &mut PendingFlushState,
     shutdown_rx: &mut watch::Receiver<CollectorShutdown>,
 ) -> ConnectionLoopControl {
     let (_, mut read) = websocket.split();
@@ -372,25 +483,8 @@ async fn collect_stream<R: Runtime>(
                 continue;
             }
             _ = flush_interval.tick() => {
-                if should_flush_pending(
-                    batch_buffer,
-                    pending_observation_records,
-                    pending_close_updates,
-                    *retry_pending_flush,
-                ) {
-                    if let Err(error) = flush_pending_state(
-                        app_handle,
-                        batch_buffer,
-                        pending_domain_stats,
-                        pending_rule_stats,
-                        pending_ip_traffic_stats,
-                        pending_observation_records,
-                        pending_traffic_samples,
-                        pending_close_updates,
-                        retry_pending_flush,
-                    )
-                    .await
-                    {
+                if state.should_flush() {
+                    if let Err(error) = flush_pending_state(app_handle, state).await {
                         warn!("collector 定时 flush 失败: {error}");
                     }
                 }
@@ -401,101 +495,46 @@ async fn collect_stream<R: Runtime>(
 
         match message {
             Some(Ok(Message::Text(text))) => {
-                if let Err(error) = apply_snapshot(
-                    app_handle,
-                    text.as_ref(),
-                    previous_connections,
-                    batch_buffer,
-                    pending_domain_stats,
-                    pending_rule_stats,
-                    pending_ip_traffic_stats,
-                    pending_observation_records,
-                    pending_traffic_samples,
-                    pending_close_updates,
-                    retry_pending_flush,
-                )
-                .await
+                if let Err(error) =
+                    apply_snapshot(app_handle, text.as_ref(), previous_connections, state).await
                 {
                     warn!("collector 处理连接快照失败: {error}");
                 }
             }
             Some(Ok(Message::Close(frame))) => {
                 info!(?frame, "collector WebSocket 已关闭");
-                app_handle.state::<RealtimeStore>().clear_active().await;
-                if let Err(error) = flush_pending_state(
-                    app_handle,
-                    batch_buffer,
-                    pending_domain_stats,
-                    pending_rule_stats,
-                    pending_ip_traffic_stats,
-                    pending_observation_records,
-                    pending_traffic_samples,
-                    pending_close_updates,
-                    retry_pending_flush,
-                )
-                .await
-                {
-                    warn!("collector 重连前 flush 失败: {error}");
-                }
-                return ConnectionLoopControl::Reconnect;
+                return handle_disconnect(app_handle, state, "重连前").await;
             }
             Some(Ok(_)) => {}
             Some(Err(error)) => {
                 warn!("collector WebSocket 读取失败: {error}");
-                app_handle.state::<RealtimeStore>().clear_active().await;
-                if let Err(error) = flush_pending_state(
-                    app_handle,
-                    batch_buffer,
-                    pending_domain_stats,
-                    pending_rule_stats,
-                    pending_ip_traffic_stats,
-                    pending_observation_records,
-                    pending_traffic_samples,
-                    pending_close_updates,
-                    retry_pending_flush,
-                )
-                .await
-                {
-                    warn!("collector 读取失败后 flush 失败: {error}");
-                }
-                return ConnectionLoopControl::Reconnect;
+                return handle_disconnect(app_handle, state, "读取失败后").await;
             }
             None => {
                 warn!("collector WebSocket 已断开");
-                app_handle.state::<RealtimeStore>().clear_active().await;
-                if let Err(error) = flush_pending_state(
-                    app_handle,
-                    batch_buffer,
-                    pending_domain_stats,
-                    pending_rule_stats,
-                    pending_ip_traffic_stats,
-                    pending_observation_records,
-                    pending_traffic_samples,
-                    pending_close_updates,
-                    retry_pending_flush,
-                )
-                .await
-                {
-                    warn!("collector 断开后 flush 失败: {error}");
-                }
-                return ConnectionLoopControl::Reconnect;
+                return handle_disconnect(app_handle, state, "断开后").await;
             }
         }
     }
+}
+
+async fn handle_disconnect<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    state: &mut PendingFlushState,
+    reason: &str,
+) -> ConnectionLoopControl {
+    app_handle.state::<RealtimeStore>().clear_active().await;
+    if let Err(error) = flush_pending_state(app_handle, state).await {
+        warn!("collector {reason} flush 失败: {error}");
+    }
+    ConnectionLoopControl::Reconnect
 }
 
 async fn apply_snapshot<R: Runtime>(
     app_handle: &AppHandle<R>,
     payload: &str,
     previous_connections: &mut HashMap<String, ConnectionRecord>,
-    batch_buffer: &mut BatchBuffer,
-    pending_domain_stats: &mut PendingDomainStats,
-    pending_rule_stats: &mut PendingRuleStats,
-    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
-    pending_observation_records: &mut PendingObservationRecords,
-    pending_traffic_samples: &mut PendingTrafficSamples,
-    pending_close_updates: &mut PendingCloseUpdates,
-    retry_pending_flush: &mut bool,
+    state: &mut PendingFlushState,
 ) -> Result<(), CollectorError> {
     let snapshot: ConnectionsSnapshot = serde_json::from_str(payload)
         .map_err(|error| CollectorError::SnapshotParse(error.to_string()))?;
@@ -514,12 +553,20 @@ async fn apply_snapshot<R: Runtime>(
     sync_pending_observation_records(
         previous_connections,
         &current_connections,
-        pending_observation_records,
+        &mut state.observation_records,
     );
+
+    let mut closed_ids = Vec::with_capacity(diff.closed.len());
+    closed_ids.extend(diff.closed.iter().map(|record| record.id.clone()));
 
     app_handle
         .state::<RealtimeStore>()
-        .update_snapshot(current_connections.values().cloned().collect())
+        .apply_diff(
+            current_connections.clone(),
+            &closed_ids,
+            diff.opened.len(),
+            diff.updated.len(),
+        )
         .await;
 
     let SnapshotDiff {
@@ -530,20 +577,7 @@ async fn apply_snapshot<R: Runtime>(
 
     for record in opened {
         let updates = build_observation_updates(&record, None, &observed_at);
-        enqueue_record(
-            app_handle,
-            batch_buffer,
-            pending_domain_stats,
-            pending_rule_stats,
-            pending_ip_traffic_stats,
-            pending_observation_records,
-            pending_traffic_samples,
-            pending_close_updates,
-            retry_pending_flush,
-            record.clone(),
-            updates,
-        )
-        .await;
+        enqueue_record(app_handle, state, record, updates).await;
     }
 
     for updated_record in updated {
@@ -552,50 +586,25 @@ async fn apply_snapshot<R: Runtime>(
             Some(&updated_record.previous),
             &observed_at,
         );
-        enqueue_record(
-            app_handle,
-            batch_buffer,
-            pending_domain_stats,
-            pending_rule_stats,
-            pending_ip_traffic_stats,
-            pending_observation_records,
-            pending_traffic_samples,
-            pending_close_updates,
-            retry_pending_flush,
-            updated_record.current.clone(),
-            updates,
-        )
-        .await;
+        enqueue_record(app_handle, state, updated_record.current, updates).await;
     }
 
     if !closed.is_empty() {
         let requires_buffer_flush = closed
             .iter()
-            .any(|record| batch_buffer.contains_connection(&record.id));
+            .any(|record| state.batch_buffer.contains_connection(&record.id));
 
         if requires_buffer_flush {
-            if let Err(error) = flush_pending_state(
-                app_handle,
-                batch_buffer,
-                pending_domain_stats,
-                pending_rule_stats,
-                pending_ip_traffic_stats,
-                pending_observation_records,
-                pending_traffic_samples,
-                pending_close_updates,
-                retry_pending_flush,
-            )
-            .await
-            {
+            if let Err(error) = flush_pending_state(app_handle, state).await {
                 warn!("collector 关闭连接前 flush 失败: {error}");
             }
         }
 
-        if *retry_pending_flush {
-            restore_close_updates(pending_close_updates, closed);
+        if state.retry_flush {
+            restore_close_updates(&mut state.close_updates, closed);
         } else if let Err(error) = apply_close_updates(app_handle, &closed).await {
-            restore_close_updates(pending_close_updates, closed);
-            *retry_pending_flush = true;
+            restore_close_updates(&mut state.close_updates, closed);
+            state.retry_flush = true;
             warn!("collector 更新连接关闭时间失败: {error}");
         }
     }
@@ -623,12 +632,13 @@ fn diff_snapshots(
         }
     }
 
+    let close_time = Utc::now().to_rfc3339();
     for (connection_id, previous_record) in previous_connections {
         if !current_connections.contains_key(connection_id) {
             diff.closed.push(ClosedConnectionRecord {
                 id: connection_id.clone(),
                 host: previous_record.host.clone(),
-                close_time: Utc::now().to_rfc3339(),
+                close_time: close_time.clone(),
             });
         }
     }
@@ -716,18 +726,6 @@ fn current_shutdown(shutdown_rx: &watch::Receiver<CollectorShutdown>) -> Collect
     *shutdown_rx.borrow()
 }
 
-fn should_flush_pending(
-    batch_buffer: &BatchBuffer,
-    pending_observation_records: &PendingObservationRecords,
-    pending_close_updates: &PendingCloseUpdates,
-    retry_pending_flush: bool,
-) -> bool {
-    retry_pending_flush
-        || batch_buffer.should_flush()
-        || (!pending_observation_records.is_empty() && batch_buffer.flush_due())
-        || (!pending_close_updates.is_empty() && batch_buffer.flush_due())
-}
-
 fn next_retry_delay(current_delay: Duration) -> Duration {
     (current_delay * 2).min(MAX_RETRY_DELAY)
 }
@@ -759,47 +757,14 @@ fn collect_active_connection_closes(
 
 async fn enqueue_record<R: Runtime>(
     app_handle: &AppHandle<R>,
-    batch_buffer: &mut BatchBuffer,
-    pending_domain_stats: &mut PendingDomainStats,
-    pending_rule_stats: &mut PendingRuleStats,
-    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
-    pending_observation_records: &mut PendingObservationRecords,
-    pending_traffic_samples: &mut PendingTrafficSamples,
-    pending_close_updates: &mut PendingCloseUpdates,
-    retry_pending_flush: &mut bool,
+    state: &mut PendingFlushState,
     record: ConnectionRecord,
     updates: ObservationUpdates,
 ) {
-    pending_observation_records.remove(&record.id);
+    state.enqueue_updates(updates, &record.id);
 
-    for update in updates.domain_updates {
-        merge_domain_update(pending_domain_stats, update);
-    }
-    for update in updates.rule_updates {
-        merge_rule_update(pending_rule_stats, update);
-    }
-    for update in updates.ip_traffic_updates {
-        merge_ip_traffic_update(pending_ip_traffic_stats, update);
-    }
-    for sample in updates.traffic_samples {
-        pending_traffic_samples.push(sample);
-    }
-
-    if let Some(records) = batch_buffer.push(record) {
-        if let Err(error) = persist_drained_records(
-            app_handle,
-            batch_buffer,
-            records,
-            pending_domain_stats,
-            pending_rule_stats,
-            pending_ip_traffic_stats,
-            pending_observation_records,
-            pending_traffic_samples,
-            pending_close_updates,
-            retry_pending_flush,
-        )
-        .await
-        {
+    if let Some(records) = state.batch_buffer.push(record) {
+        if let Err(error) = persist_drained_records(app_handle, state, records).await {
             warn!("collector 容量 flush 失败: {error}");
         }
     }
@@ -807,106 +772,57 @@ async fn enqueue_record<R: Runtime>(
 
 async fn flush_pending_state<R: Runtime>(
     app_handle: &AppHandle<R>,
-    batch_buffer: &mut BatchBuffer,
-    pending_domain_stats: &mut PendingDomainStats,
-    pending_rule_stats: &mut PendingRuleStats,
-    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
-    pending_observation_records: &mut PendingObservationRecords,
-    pending_traffic_samples: &mut PendingTrafficSamples,
-    pending_close_updates: &mut PendingCloseUpdates,
-    retry_pending_flush: &mut bool,
+    state: &mut PendingFlushState,
 ) -> Result<(), DbError> {
-    let records = batch_buffer.flush();
-    persist_drained_records(
-        app_handle,
-        batch_buffer,
-        records,
-        pending_domain_stats,
-        pending_rule_stats,
-        pending_ip_traffic_stats,
-        pending_observation_records,
-        pending_traffic_samples,
-        pending_close_updates,
-        retry_pending_flush,
-    )
-    .await
+    let records = state.batch_buffer.flush();
+    persist_drained_records(app_handle, state, records).await
 }
 
 async fn persist_drained_records<R: Runtime>(
     app_handle: &AppHandle<R>,
-    batch_buffer: &mut BatchBuffer,
+    state: &mut PendingFlushState,
     records: Vec<ConnectionRecord>,
-    pending_domain_stats: &mut PendingDomainStats,
-    pending_rule_stats: &mut PendingRuleStats,
-    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
-    pending_observation_records: &mut PendingObservationRecords,
-    pending_traffic_samples: &mut PendingTrafficSamples,
-    pending_close_updates: &mut PendingCloseUpdates,
-    retry_pending_flush: &mut bool,
 ) -> Result<(), DbError> {
-    if records.is_empty()
-        && pending_domain_stats.is_empty()
-        && pending_rule_stats.is_empty()
-        && pending_ip_traffic_stats.is_empty()
-        && pending_observation_records.is_empty()
-        && pending_traffic_samples.is_empty()
-        && pending_close_updates.is_empty()
-    {
-        *retry_pending_flush = false;
+    if records.is_empty() && state.is_all_empty() {
+        state.retry_flush = false;
         return Ok(());
     }
 
-    let domain_updates = drain_domain_updates(pending_domain_stats);
-    let rule_updates = drain_rule_updates(pending_rule_stats);
-    let ip_traffic_updates = drain_ip_traffic_updates(pending_ip_traffic_stats);
-    let observation_records = drain_observation_records(pending_observation_records);
-    let traffic_samples = drain_traffic_samples(pending_traffic_samples);
-    let close_updates = drain_close_updates(pending_close_updates);
+    let drained = state.drain_all();
 
     let db = match db::get_db_pool(app_handle).await {
         Ok(db) => db,
         Err(error) => {
-            batch_buffer.restore(records);
-            restore_domain_updates(pending_domain_stats, domain_updates);
-            restore_rule_updates(pending_rule_stats, rule_updates);
-            restore_ip_traffic_updates(pending_ip_traffic_stats, ip_traffic_updates);
-            restore_observation_records(pending_observation_records, observation_records);
-            restore_traffic_samples(pending_traffic_samples, traffic_samples);
-            restore_close_updates(pending_close_updates, close_updates);
-            *retry_pending_flush = true;
+            state.batch_buffer.restore(records);
+            state.restore_all(drained);
+            state.retry_flush = true;
             return Err(error);
         }
     };
 
-    if let Err(error) = repo_connection::persist_connection_batch(
-        &db,
-        &records,
-        &observation_records,
-        &domain_updates,
-        &rule_updates,
-        &ip_traffic_updates,
-        &traffic_samples,
-    )
-    .await
-    {
-        batch_buffer.restore(records);
-        restore_domain_updates(pending_domain_stats, domain_updates);
-        restore_rule_updates(pending_rule_stats, rule_updates);
-        restore_ip_traffic_updates(pending_ip_traffic_stats, ip_traffic_updates);
-        restore_observation_records(pending_observation_records, observation_records);
-        restore_traffic_samples(pending_traffic_samples, traffic_samples);
-        restore_close_updates(pending_close_updates, close_updates);
-        *retry_pending_flush = true;
+    let payload = BatchPersistPayload {
+        records: &records,
+        observation_records: &drained.observation_records,
+        domain_updates: &drained.domain_updates,
+        rule_updates: &drained.rule_updates,
+        ip_traffic_updates: &drained.ip_traffic_updates,
+        traffic_samples: &drained.traffic_samples,
+    };
+
+    if let Err(error) = repo_connection::persist_connection_batch(&db, &payload).await {
+        state.batch_buffer.restore(records);
+        state.restore_all(drained);
+        state.retry_flush = true;
         return Err(error);
     }
 
-    if let Err(error) = apply_close_updates_with_db(&db, &close_updates).await {
-        restore_close_updates(pending_close_updates, close_updates);
-        *retry_pending_flush = true;
+    if let Err(error) = apply_close_updates_with_db(&db, &drained.close_updates).await {
+        restore_close_updates(&mut state.close_updates, drained.close_updates);
+        state.retry_flush = true;
         return Err(error);
     }
 
-    *retry_pending_flush = false;
+    state.retry_flush = false;
     Ok(())
 }
 
@@ -1004,6 +920,37 @@ fn build_observation_updates(
     }
 }
 
+fn distribute_and_build<T>(
+    upload: i64,
+    download: i64,
+    is_new_connection: bool,
+    buckets: Vec<WeightedBucket<String>>,
+    count_new: bool,
+    build_item: impl Fn(String, i64, i64, i64) -> T,
+) -> Vec<T> {
+    let uploads = distribute_total(upload, &buckets);
+    let downloads = distribute_total(download, &buckets);
+    let mut items = Vec::with_capacity(buckets.len());
+
+    for (index, bucket) in buckets.into_iter().enumerate() {
+        let count = if count_new && is_new_connection && index == 0 {
+            1
+        } else {
+            0
+        };
+        let up = uploads.get(index).copied().unwrap_or(0);
+        let down = downloads.get(index).copied().unwrap_or(0);
+
+        if count == 0 && up == 0 && down == 0 {
+            continue;
+        }
+
+        items.push(build_item(bucket.key, up, down, count));
+    }
+
+    items
+}
+
 fn build_domain_stats_updates(
     domain: &str,
     upload: i64,
@@ -1018,34 +965,20 @@ fn build_domain_stats_updates(
     }
 
     let (start, end) = observation_window(current_record, previous_record, observed_at);
-    let buckets = build_day_buckets(start, end);
-    let uploads = distribute_total(upload, &buckets);
-    let downloads = distribute_total(download, &buckets);
-    let mut updates = Vec::with_capacity(buckets.len());
-
-    for (index, bucket) in buckets.into_iter().enumerate() {
-        let hit_count = if is_new_connection && index == 0 {
-            1
-        } else {
-            0
-        };
-        let upload = uploads.get(index).copied().unwrap_or(0);
-        let download = downloads.get(index).copied().unwrap_or(0);
-
-        if hit_count == 0 && upload == 0 && download == 0 {
-            continue;
-        }
-
-        updates.push(DomainStatsUpdate {
+    distribute_and_build(
+        upload,
+        download,
+        is_new_connection,
+        build_day_buckets(start, end),
+        true,
+        |day, up, down, count| DomainStatsUpdate {
             domain: domain.to_string(),
-            day: bucket.key,
-            hit_count,
-            upload,
-            download,
-        });
-    }
-
-    updates
+            day,
+            hit_count: count,
+            upload: up,
+            download: down,
+        },
+    )
 }
 
 fn build_rule_stats_updates(
@@ -1062,34 +995,20 @@ fn build_rule_stats_updates(
     }
 
     let (start, end) = observation_window(current_record, previous_record, observed_at);
-    let buckets = build_day_buckets(start, end);
-    let uploads = distribute_total(upload, &buckets);
-    let downloads = distribute_total(download, &buckets);
-    let mut updates = Vec::with_capacity(buckets.len());
-
-    for (index, bucket) in buckets.into_iter().enumerate() {
-        let hit_count = if is_new_connection && index == 0 {
-            1
-        } else {
-            0
-        };
-        let upload = uploads.get(index).copied().unwrap_or(0);
-        let download = downloads.get(index).copied().unwrap_or(0);
-
-        if hit_count == 0 && upload == 0 && download == 0 {
-            continue;
-        }
-
-        updates.push(RuleStatsUpdate {
+    distribute_and_build(
+        upload,
+        download,
+        is_new_connection,
+        build_day_buckets(start, end),
+        true,
+        |day, up, down, count| RuleStatsUpdate {
             rule: rule.to_string(),
-            day: bucket.key,
-            hit_count,
-            upload,
-            download,
-        });
-    }
-
-    updates
+            day,
+            hit_count: count,
+            upload: up,
+            download: down,
+        },
+    )
 }
 
 fn build_ip_traffic_stats_updates(
@@ -1101,37 +1020,24 @@ fn build_ip_traffic_stats_updates(
     previous_record: Option<&ConnectionRecord>,
     observed_at: &str,
 ) -> Vec<IpTrafficStatsUpdate> {
-    if !is_new_connection && upload == 0 && download == 0 {
-        return Vec::new();
-    }
-
     if upload == 0 && download == 0 {
         return Vec::new();
     }
 
     let (start, end) = observation_window(current_record, previous_record, observed_at);
-    let buckets = build_day_buckets(start, end);
-    let uploads = distribute_total(upload, &buckets);
-    let downloads = distribute_total(download, &buckets);
-    let mut updates = Vec::with_capacity(buckets.len());
-
-    for (index, bucket) in buckets.into_iter().enumerate() {
-        let upload = uploads.get(index).copied().unwrap_or(0);
-        let download = downloads.get(index).copied().unwrap_or(0);
-
-        if upload == 0 && download == 0 {
-            continue;
-        }
-
-        updates.push(IpTrafficStatsUpdate {
+    distribute_and_build(
+        upload,
+        download,
+        is_new_connection,
+        build_day_buckets(start, end),
+        false,
+        |day, up, down, _count| IpTrafficStatsUpdate {
             dst_ip: dst_ip.to_string(),
-            day: bucket.key,
-            upload,
-            download,
-        });
-    }
-
-    updates
+            day,
+            upload: up,
+            download: down,
+        },
+    )
 }
 
 fn build_traffic_samples(
@@ -1147,33 +1053,19 @@ fn build_traffic_samples(
     }
 
     let (start, end) = observation_window(current_record, previous_record, observed_at);
-    let buckets = build_hour_buckets(start, end);
-    let uploads = distribute_total(upload, &buckets);
-    let downloads = distribute_total(download, &buckets);
-    let mut samples = Vec::with_capacity(buckets.len());
-
-    for (index, bucket) in buckets.into_iter().enumerate() {
-        let conn_count = if is_new_connection && index == 0 {
-            1
-        } else {
-            0
-        };
-        let upload = uploads.get(index).copied().unwrap_or(0);
-        let download = downloads.get(index).copied().unwrap_or(0);
-
-        if conn_count == 0 && upload == 0 && download == 0 {
-            continue;
-        }
-
-        samples.push(TrafficSampleInsert {
-            ts: bucket.key,
-            upload,
-            download,
-            conn_count,
-        });
-    }
-
-    samples
+    distribute_and_build(
+        upload,
+        download,
+        is_new_connection,
+        build_hour_buckets(start, end),
+        true,
+        |ts, up, down, count| TrafficSampleInsert {
+            ts,
+            upload: up,
+            download: down,
+            conn_count: count,
+        },
+    )
 }
 
 fn observation_window(
@@ -1181,12 +1073,12 @@ fn observation_window(
     previous_record: Option<&ConnectionRecord>,
     observed_at: &str,
 ) -> (DateTime<Utc>, DateTime<Utc>) {
-    let end = parse_timestamp(observed_at).unwrap_or_else(Utc::now);
+    let end = time_utils::parse_rfc3339(observed_at).unwrap_or_else(Utc::now);
     let baseline = previous_record
         .and_then(|record| record.last_observed_at.as_deref())
         .or_else(|| previous_record.map(|record| record.start_time.as_str()))
         .unwrap_or(&current_record.start_time);
-    let start = parse_timestamp(baseline).unwrap_or(end);
+    let start = time_utils::parse_rfc3339(baseline).unwrap_or(end);
 
     if start < end {
         (start, end)
@@ -1196,11 +1088,21 @@ fn observation_window(
 }
 
 fn build_hour_buckets(start: DateTime<Utc>, end: DateTime<Utc>) -> Vec<WeightedBucket<String>> {
-    build_weighted_buckets(start, end, hour_bucket_key, next_hour_boundary)
+    build_weighted_buckets(
+        start,
+        end,
+        time_utils::hour_bucket_key,
+        time_utils::next_hour_boundary,
+    )
 }
 
 fn build_day_buckets(start: DateTime<Utc>, end: DateTime<Utc>) -> Vec<WeightedBucket<String>> {
-    build_weighted_buckets(start, end, day_bucket_key, next_day_boundary)
+    build_weighted_buckets(
+        start,
+        end,
+        time_utils::day_bucket_key,
+        time_utils::next_day_boundary,
+    )
 }
 
 fn build_weighted_buckets<T, FKey, FNext>(
@@ -1279,39 +1181,6 @@ fn distribute_total<T>(total: i64, buckets: &[WeightedBucket<T>]) -> Vec<i64> {
     parts
 }
 
-fn hour_bucket_key(timestamp: &DateTime<Utc>) -> String {
-    hour_bucket_start(timestamp).to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-}
-
-fn day_bucket_key(timestamp: &DateTime<Utc>) -> String {
-    timestamp.date_naive().to_string()
-}
-
-fn hour_bucket_start(timestamp: &DateTime<Utc>) -> DateTime<Utc> {
-    match timestamp.duration_trunc(ChronoDuration::hours(1)) {
-        Ok(value) => value,
-        Err(_) => *timestamp,
-    }
-}
-
-fn next_hour_boundary(timestamp: &DateTime<Utc>) -> DateTime<Utc> {
-    hour_bucket_start(timestamp) + ChronoDuration::hours(1)
-}
-
-fn next_day_boundary(timestamp: &DateTime<Utc>) -> DateTime<Utc> {
-    let next_day = timestamp.date_naive() + ChronoDuration::days(1);
-    match next_day.and_hms_opt(0, 0, 0) {
-        Some(value) => Utc.from_utc_datetime(&value),
-        None => *timestamp,
-    }
-}
-
-fn parse_timestamp(value: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(value)
-        .ok()
-        .map(|timestamp| timestamp.with_timezone(&Utc))
-}
-
 fn counter_delta(current_value: i64, previous_value: i64) -> i64 {
     if current_value >= previous_value {
         current_value - previous_value
@@ -1327,131 +1196,6 @@ fn normalize_rule_name(value: &str) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-fn merge_domain_update(pending_domain_stats: &mut PendingDomainStats, update: DomainStatsUpdate) {
-    let key = (update.domain.clone(), update.day.clone());
-
-    if let Some(existing) = pending_domain_stats.get_mut(&key) {
-        existing.hit_count += update.hit_count;
-        existing.upload += update.upload;
-        existing.download += update.download;
-    } else {
-        pending_domain_stats.insert(key, update);
-    }
-}
-
-fn merge_rule_update(pending_rule_stats: &mut PendingRuleStats, update: RuleStatsUpdate) {
-    let key = (update.rule.clone(), update.day.clone());
-
-    if let Some(existing) = pending_rule_stats.get_mut(&key) {
-        existing.hit_count += update.hit_count;
-        existing.upload += update.upload;
-        existing.download += update.download;
-    } else {
-        pending_rule_stats.insert(key, update);
-    }
-}
-
-fn merge_ip_traffic_update(
-    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
-    update: IpTrafficStatsUpdate,
-) {
-    let key = (update.dst_ip.clone(), update.day.clone());
-
-    if let Some(existing) = pending_ip_traffic_stats.get_mut(&key) {
-        existing.upload += update.upload;
-        existing.download += update.download;
-    } else {
-        pending_ip_traffic_stats.insert(key, update);
-    }
-}
-
-fn drain_domain_updates(pending_domain_stats: &mut PendingDomainStats) -> Vec<DomainStatsUpdate> {
-    pending_domain_stats
-        .drain()
-        .map(|(_, update)| update)
-        .collect()
-}
-
-fn drain_rule_updates(pending_rule_stats: &mut PendingRuleStats) -> Vec<RuleStatsUpdate> {
-    pending_rule_stats
-        .drain()
-        .map(|(_, update)| update)
-        .collect()
-}
-
-fn restore_domain_updates(
-    pending_domain_stats: &mut PendingDomainStats,
-    updates: Vec<DomainStatsUpdate>,
-) {
-    for update in updates {
-        merge_domain_update(pending_domain_stats, update);
-    }
-}
-
-fn restore_rule_updates(pending_rule_stats: &mut PendingRuleStats, updates: Vec<RuleStatsUpdate>) {
-    for update in updates {
-        merge_rule_update(pending_rule_stats, update);
-    }
-}
-
-fn drain_ip_traffic_updates(
-    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
-) -> Vec<IpTrafficStatsUpdate> {
-    pending_ip_traffic_stats
-        .drain()
-        .map(|(_, update)| update)
-        .collect()
-}
-
-fn restore_ip_traffic_updates(
-    pending_ip_traffic_stats: &mut PendingIpTrafficStats,
-    updates: Vec<IpTrafficStatsUpdate>,
-) {
-    for update in updates {
-        merge_ip_traffic_update(pending_ip_traffic_stats, update);
-    }
-}
-
-fn drain_observation_records(
-    pending_observation_records: &mut PendingObservationRecords,
-) -> Vec<ConnectionRecord> {
-    pending_observation_records
-        .drain()
-        .map(|(_, record)| record)
-        .collect()
-}
-
-fn restore_observation_records(
-    pending_observation_records: &mut PendingObservationRecords,
-    records: Vec<ConnectionRecord>,
-) {
-    for record in records {
-        pending_observation_records.insert(record.id.clone(), record);
-    }
-}
-
-fn drain_traffic_samples(
-    pending_traffic_samples: &mut PendingTrafficSamples,
-) -> Vec<TrafficSampleInsert> {
-    std::mem::take(pending_traffic_samples)
-}
-
-fn restore_traffic_samples(
-    pending_traffic_samples: &mut PendingTrafficSamples,
-    updates: Vec<TrafficSampleInsert>,
-) {
-    pending_traffic_samples.extend(updates);
-}
-
-fn drain_close_updates(
-    pending_close_updates: &mut PendingCloseUpdates,
-) -> Vec<ClosedConnectionRecord> {
-    pending_close_updates
-        .drain()
-        .map(|(_, update)| update)
-        .collect()
 }
 
 fn restore_close_updates(

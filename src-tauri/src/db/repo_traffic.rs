@@ -1,8 +1,9 @@
-use chrono::{DateTime, Datelike, LocalResult, SecondsFormat, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Utc};
 use sqlx::{Row, Sqlite, Transaction};
 use tauri_plugin_sql::DbPool;
 
-use super::{sqlite_pool, DbError};
+use super::{sqlite_pool, try_col, DbError};
+use crate::utils::time;
 
 const AGGREGATE_HOURLY_SQL: &str = r#"
 INSERT INTO traffic_hourly (hour, upload, download, conn_count)
@@ -228,18 +229,10 @@ async fn query_traffic(
     let mut points = Vec::with_capacity(rows.len());
     for row in rows {
         points.push(TrafficBucketRow {
-            time: row
-                .try_get("time")
-                .map_err(|error| DbError::QueryFailed(format!("读取流量时间失败: {error}")))?,
-            upload: row
-                .try_get("upload")
-                .map_err(|error| DbError::QueryFailed(format!("读取流量 upload 失败: {error}")))?,
-            download: row.try_get("download").map_err(|error| {
-                DbError::QueryFailed(format!("读取流量 download 失败: {error}"))
-            })?,
-            conn_count: row.try_get("conn_count").map_err(|error| {
-                DbError::QueryFailed(format!("读取流量 conn_count 失败: {error}"))
-            })?,
+            time: try_col!(row, "time", "流量"),
+            upload: try_col!(row, "upload", "流量"),
+            download: try_col!(row, "download", "流量"),
+            conn_count: try_col!(row, "conn_count", "流量"),
         });
     }
 
@@ -268,13 +261,13 @@ async fn execute_aggregate_in_tx(
 fn build_hourly_window_for_samples(
     samples: &[TrafficSampleInsert],
 ) -> Result<Option<AggregationWindow>, DbError> {
-    build_window_for_samples(samples, floor_to_hour, shift_hour)
+    build_window_for_samples(samples, time::floor_to_hour, time::shift_hour)
 }
 
 fn build_daily_window_for_samples(
     samples: &[TrafficSampleInsert],
 ) -> Result<Option<AggregationWindow>, DbError> {
-    build_window_for_samples(samples, floor_to_day, shift_day)
+    build_window_for_samples(samples, time::floor_to_day, time::shift_day)
 }
 
 fn build_window_for_samples<FFloor, FShift>(
@@ -290,7 +283,7 @@ where
     let mut max_ts: Option<DateTime<Utc>> = None;
 
     for sample in samples {
-        let ts = parse_iso8601(&sample.ts, "sample.ts")?;
+        let ts = parse_time_value(&sample.ts, "sample.ts")?;
         min_ts = Some(match min_ts {
             Some(current) => current.min(ts),
             None => ts,
@@ -309,54 +302,26 @@ where
     let to = shift_fn(floor_fn(max_ts));
 
     Ok(Some(AggregationWindow {
-        from: format_utc(from),
-        to: format_utc(to),
+        from: time::format_utc(from),
+        to: time::format_utc(to),
     }))
 }
 
-fn floor_to_hour(value: DateTime<Utc>) -> DateTime<Utc> {
-    match Utc.with_ymd_and_hms(value.year(), value.month(), value.day(), value.hour(), 0, 0) {
-        LocalResult::Single(timestamp) => timestamp,
-        _ => value,
-    }
-}
-
-fn shift_hour(value: DateTime<Utc>) -> DateTime<Utc> {
-    value + chrono::Duration::hours(1)
-}
-
-fn floor_to_day(value: DateTime<Utc>) -> DateTime<Utc> {
-    match Utc.with_ymd_and_hms(value.year(), value.month(), value.day(), 0, 0, 0) {
-        LocalResult::Single(timestamp) => timestamp,
-        _ => value,
-    }
-}
-
-fn shift_day(value: DateTime<Utc>) -> DateTime<Utc> {
-    value + chrono::Duration::days(1)
-}
-
 fn normalize_window(from: &str, to: &str) -> Result<(String, String), DbError> {
-    let from = parse_iso8601(from, "from")?;
-    let to = parse_iso8601(to, "to")?;
+    let from = parse_time_value(from, "from")?;
+    let to = parse_time_value(to, "to")?;
 
     if from >= to {
         return Err(DbError::InvalidTimeWindow("from 必须早于 to".to_string()));
     }
 
-    Ok((format_utc(from), format_utc(to)))
+    Ok((time::format_utc(from), time::format_utc(to)))
 }
 
-fn parse_iso8601(value: &str, label: &str) -> Result<DateTime<Utc>, DbError> {
-    DateTime::parse_from_rfc3339(value)
-        .map(|timestamp| timestamp.with_timezone(&Utc))
-        .map_err(|error| {
-            DbError::InvalidTimeWindow(format!("{label} 不是有效的 ISO 8601 时间: {error}"))
-        })
-}
-
-fn format_utc(value: DateTime<Utc>) -> String {
-    value.to_rfc3339_opts(SecondsFormat::Secs, true)
+fn parse_time_value(value: &str, label: &str) -> Result<DateTime<Utc>, DbError> {
+    time::parse_rfc3339(value).ok_or_else(|| {
+        DbError::InvalidTimeWindow(format!("{label} 不是有效的 ISO 8601 时间: {value}"))
+    })
 }
 
 #[cfg(test)]

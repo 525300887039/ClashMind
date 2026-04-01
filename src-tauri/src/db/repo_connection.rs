@@ -9,7 +9,7 @@ use super::{
     repo_domain::{self, DomainStatsUpdate},
     repo_geoip::{self, IpTrafficStatsUpdate},
     repo_traffic::{self, TrafficSampleInsert},
-    sqlite_pool, DbError,
+    sqlite_pool, try_col, DbError,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +43,16 @@ pub struct RuleStatsUpdate {
     pub hit_count: i64,
     pub upload: i64,
     pub download: i64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BatchPersistPayload<'a> {
+    pub records: &'a [ConnectionRecord],
+    pub observation_records: &'a [ConnectionRecord],
+    pub domain_updates: &'a [DomainStatsUpdate],
+    pub rule_updates: &'a [RuleStatsUpdate],
+    pub ip_traffic_updates: &'a [IpTrafficStatsUpdate],
+    pub traffic_samples: &'a [TrafficSampleInsert],
 }
 
 #[allow(dead_code)]
@@ -123,51 +133,21 @@ WHERE close_time IS NULL;
     let mut records = HashMap::with_capacity(rows.len());
     for row in rows {
         let record = ConnectionRecord {
-            id: row
-                .try_get("id")
-                .map_err(|error| DbError::QueryFailed(format!("读取连接 id 失败: {error}")))?,
-            host: row
-                .try_get("host")
-                .map_err(|error| DbError::QueryFailed(format!("读取连接 host 失败: {error}")))?,
-            dst_ip: row
-                .try_get("dst_ip")
-                .map_err(|error| DbError::QueryFailed(format!("读取连接 dst_ip 失败: {error}")))?,
-            dst_port: row.try_get("dst_port").map_err(|error| {
-                DbError::QueryFailed(format!("读取连接 dst_port 失败: {error}"))
-            })?,
-            src_ip: row
-                .try_get("src_ip")
-                .map_err(|error| DbError::QueryFailed(format!("读取连接 src_ip 失败: {error}")))?,
-            src_port: row.try_get("src_port").map_err(|error| {
-                DbError::QueryFailed(format!("读取连接 src_port 失败: {error}"))
-            })?,
-            network: row
-                .try_get("network")
-                .map_err(|error| DbError::QueryFailed(format!("读取连接 network 失败: {error}")))?,
-            conn_type: row.try_get("conn_type").map_err(|error| {
-                DbError::QueryFailed(format!("读取连接 conn_type 失败: {error}"))
-            })?,
-            rule: row
-                .try_get("rule")
-                .map_err(|error| DbError::QueryFailed(format!("读取连接 rule 失败: {error}")))?,
-            rule_payload: row.try_get("rule_payload").map_err(|error| {
-                DbError::QueryFailed(format!("读取连接 rule_payload 失败: {error}"))
-            })?,
-            proxy_chain: row.try_get("proxy_chain").map_err(|error| {
-                DbError::QueryFailed(format!("读取连接 proxy_chain 失败: {error}"))
-            })?,
-            upload: row
-                .try_get("upload")
-                .map_err(|error| DbError::QueryFailed(format!("读取连接 upload 失败: {error}")))?,
-            download: row.try_get("download").map_err(|error| {
-                DbError::QueryFailed(format!("读取连接 download 失败: {error}"))
-            })?,
-            start_time: row.try_get("start_time").map_err(|error| {
-                DbError::QueryFailed(format!("读取连接 start_time 失败: {error}"))
-            })?,
-            last_observed_at: row.try_get("last_observed_at").map_err(|error| {
-                DbError::QueryFailed(format!("读取连接 last_observed_at 失败: {error}"))
-            })?,
+            id: try_col!(row, "id", "连接"),
+            host: try_col!(row, "host", "连接"),
+            dst_ip: try_col!(row, "dst_ip", "连接"),
+            dst_port: try_col!(row, "dst_port", "连接"),
+            src_ip: try_col!(row, "src_ip", "连接"),
+            src_port: try_col!(row, "src_port", "连接"),
+            network: try_col!(row, "network", "连接"),
+            conn_type: try_col!(row, "conn_type", "连接"),
+            rule: try_col!(row, "rule", "连接"),
+            rule_payload: try_col!(row, "rule_payload", "连接"),
+            proxy_chain: try_col!(row, "proxy_chain", "连接"),
+            upload: try_col!(row, "upload", "连接"),
+            download: try_col!(row, "download", "连接"),
+            start_time: try_col!(row, "start_time", "连接"),
+            last_observed_at: try_col!(row, "last_observed_at", "连接"),
         };
         records.insert(record.id.clone(), record);
     }
@@ -263,21 +243,11 @@ SELECT
     .map_err(|error| DbError::QueryFailed(format!("查询统计概览失败: {error}")))?;
 
     Ok(ConnectionOverview {
-        total_connections: row.try_get("total_connections").map_err(|error| {
-            DbError::QueryFailed(format!("读取统计概览 total_connections 失败: {error}"))
-        })?,
-        total_upload: row.try_get("total_upload").map_err(|error| {
-            DbError::QueryFailed(format!("读取统计概览 total_upload 失败: {error}"))
-        })?,
-        total_download: row.try_get("total_download").map_err(|error| {
-            DbError::QueryFailed(format!("读取统计概览 total_download 失败: {error}"))
-        })?,
-        active_connections: row.try_get("active_connections").map_err(|error| {
-            DbError::QueryFailed(format!("读取统计概览 active_connections 失败: {error}"))
-        })?,
-        unique_domains: row.try_get("unique_domains").map_err(|error| {
-            DbError::QueryFailed(format!("读取统计概览 unique_domains 失败: {error}"))
-        })?,
+        total_connections: try_col!(row, "total_connections", "统计概览"),
+        total_upload: try_col!(row, "total_upload", "统计概览"),
+        total_download: try_col!(row, "total_download", "统计概览"),
+        active_connections: try_col!(row, "active_connections", "统计概览"),
+        unique_domains: try_col!(row, "unique_domains", "统计概览"),
     })
 }
 
@@ -317,18 +287,10 @@ LIMIT ?;
     let mut rules = Vec::with_capacity(rows.len());
     for row in rows {
         rules.push(RuleStatRow {
-            rule: row.try_get("rule").map_err(|error| {
-                DbError::QueryFailed(format!("读取规则统计 rule 失败: {error}"))
-            })?,
-            hit_count: row.try_get("hit_count").map_err(|error| {
-                DbError::QueryFailed(format!("读取规则统计 hit_count 失败: {error}"))
-            })?,
-            upload: row.try_get("upload").map_err(|error| {
-                DbError::QueryFailed(format!("读取规则统计 upload 失败: {error}"))
-            })?,
-            download: row.try_get("download").map_err(|error| {
-                DbError::QueryFailed(format!("读取规则统计 download 失败: {error}"))
-            })?,
+            rule: try_col!(row, "rule", "规则统计"),
+            hit_count: try_col!(row, "hit_count", "规则统计"),
+            upload: try_col!(row, "upload", "规则统计"),
+            download: try_col!(row, "download", "规则统计"),
         });
     }
 
@@ -384,15 +346,9 @@ ORDER BY total_traffic DESC, conn_count DESC, dst_ip ASC;
     let mut stats = Vec::with_capacity(rows.len());
     for row in rows {
         stats.push(GeoIpTrafficRow {
-            dst_ip: row
-                .try_get("dst_ip")
-                .map_err(|error| DbError::QueryFailed(format!("读取 dst_ip 失败: {error}")))?,
-            conn_count: row.try_get("conn_count").map_err(|error| {
-                DbError::QueryFailed(format!("读取 GeoIP 统计 conn_count 失败: {error}"))
-            })?,
-            total_traffic: row.try_get("total_traffic").map_err(|error| {
-                DbError::QueryFailed(format!("读取 GeoIP 统计 total_traffic 失败: {error}"))
-            })?,
+            dst_ip: try_col!(row, "dst_ip"),
+            conn_count: try_col!(row, "conn_count", "GeoIP 统计"),
+            total_traffic: try_col!(row, "total_traffic", "GeoIP 统计"),
         });
     }
 
@@ -439,19 +395,14 @@ DO UPDATE SET
 
 pub(crate) async fn persist_connection_batch(
     db: &DbPool,
-    records: &[ConnectionRecord],
-    observation_records: &[ConnectionRecord],
-    domain_updates: &[DomainStatsUpdate],
-    rule_updates: &[RuleStatsUpdate],
-    ip_traffic_updates: &[IpTrafficStatsUpdate],
-    traffic_samples: &[TrafficSampleInsert],
+    payload: &BatchPersistPayload<'_>,
 ) -> Result<(), DbError> {
-    if records.is_empty()
-        && observation_records.is_empty()
-        && domain_updates.is_empty()
-        && rule_updates.is_empty()
-        && ip_traffic_updates.is_empty()
-        && traffic_samples.is_empty()
+    if payload.records.is_empty()
+        && payload.observation_records.is_empty()
+        && payload.domain_updates.is_empty()
+        && payload.rule_updates.is_empty()
+        && payload.ip_traffic_updates.is_empty()
+        && payload.traffic_samples.is_empty()
     {
         return Ok(());
     }
@@ -462,13 +413,15 @@ pub(crate) async fn persist_connection_batch(
         .await
         .map_err(|error| DbError::TransactionFailed(error.to_string()))?;
 
-    batch_insert_connections_in_tx(&mut transaction, records).await?;
-    batch_update_last_observed_at_in_tx(&mut transaction, observation_records).await?;
-    repo_domain::batch_upsert_domain_stats_in_tx(&mut transaction, domain_updates).await?;
-    batch_upsert_rule_stats_in_tx(&mut transaction, rule_updates).await?;
-    repo_geoip::batch_upsert_ip_traffic_stats_in_tx(&mut transaction, ip_traffic_updates).await?;
-    repo_traffic::batch_insert_traffic_samples_in_tx(&mut transaction, traffic_samples).await?;
-    repo_traffic::aggregate_samples_in_tx(&mut transaction, traffic_samples).await?;
+    batch_insert_connections_in_tx(&mut transaction, payload.records).await?;
+    batch_update_last_observed_at_in_tx(&mut transaction, payload.observation_records).await?;
+    repo_domain::batch_upsert_domain_stats_in_tx(&mut transaction, payload.domain_updates).await?;
+    batch_upsert_rule_stats_in_tx(&mut transaction, payload.rule_updates).await?;
+    repo_geoip::batch_upsert_ip_traffic_stats_in_tx(&mut transaction, payload.ip_traffic_updates)
+        .await?;
+    repo_traffic::batch_insert_traffic_samples_in_tx(&mut transaction, payload.traffic_samples)
+        .await?;
+    repo_traffic::aggregate_samples_in_tx(&mut transaction, payload.traffic_samples).await?;
     transaction
         .commit()
         .await

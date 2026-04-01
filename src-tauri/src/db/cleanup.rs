@@ -1,10 +1,11 @@
 //! Database cleanup routines for expiring historical data without locking the database.
 
-use chrono::{SecondsFormat, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tauri_plugin_sql::DbPool;
 
 use super::{sqlite_pool, DbError};
+use crate::utils::time as time_utils;
 
 // Connection-backed stats expose a 30-day window in the UI, so raw rows must outlive that range.
 const CONNECTION_RETENTION_DAYS: i32 = 30;
@@ -111,7 +112,7 @@ pub async fn run_full_cleanup(db: &DbPool) -> Result<CleanupReport, DbError> {
         hourly_deleted,
         domain_stats_deleted,
         geoip_deleted,
-        executed_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        executed_at: time_utils::format_utc(Utc::now()),
     })
 }
 

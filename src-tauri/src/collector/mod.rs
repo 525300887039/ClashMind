@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 
-use chrono::{DateTime, Duration as ChronoDuration, DurationRound, SecondsFormat, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, DurationRound, Utc};
 use serde::Serialize;
 use tauri::{async_runtime::JoinHandle, AppHandle, Runtime};
 use thiserror::Error;
@@ -24,7 +24,10 @@ use tokio::{
 };
 use tracing::{info, warn};
 
-use crate::db::{self, cleanup, repo_traffic};
+use crate::{
+    db::{self, cleanup, repo_traffic},
+    utils::time as time_utils,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum CollectorShutdown {
@@ -172,13 +175,7 @@ impl CollectorState {
 
             let current = std::mem::take(&mut *guard);
             match current {
-                CollectorLifecycle::Running(runtime) => {
-                    let _ = runtime.cancel_tx.send(shutdown);
-                    let done_rx = runtime.done_rx.clone();
-                    *guard = CollectorLifecycle::Stopping(runtime);
-                    done_rx
-                }
-                CollectorLifecycle::Stopping(runtime) => {
+                CollectorLifecycle::Running(runtime) | CollectorLifecycle::Stopping(runtime) => {
                     let _ = runtime.cancel_tx.send(shutdown);
                     let done_rx = runtime.done_rx.clone();
                     *guard = CollectorLifecycle::Stopping(runtime);
@@ -214,10 +211,6 @@ impl CollectorState {
                 None
             }
         };
-
-        if runtime.is_none() && matches!(&*guard, CollectorLifecycle::Idle) {
-            *guard = CollectorLifecycle::Idle;
-        }
 
         Ok(runtime)
     }
@@ -318,11 +311,10 @@ fn build_aggregation_window(
         + bucket;
     let window_start = window_end - bucket - lookback;
 
-    Ok((format_iso8601(window_start), format_iso8601(window_end)))
-}
-
-fn format_iso8601(value: DateTime<Utc>) -> String {
-    value.to_rfc3339_opts(SecondsFormat::Secs, true)
+    Ok((
+        time_utils::format_utc(window_start),
+        time_utils::format_utc(window_end),
+    ))
 }
 
 /// Errors returned by collector commands and background tasks.

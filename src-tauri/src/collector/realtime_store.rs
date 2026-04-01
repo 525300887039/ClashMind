@@ -41,6 +41,7 @@ impl RealtimeStore {
     }
 
     /// Replaces the active snapshot and tracks opened, updated, and closed connections.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub async fn update_snapshot(&self, connections: Vec<ConnectionRecord>) {
         let mut next_active = HashMap::with_capacity(connections.len());
         for connection in connections {
@@ -66,15 +67,56 @@ impl RealtimeStore {
                 }
             }
 
+            let previous_active = std::mem::replace(&mut *active, next_active);
             let mut closed_records = Vec::new();
-            for (connection_id, previous_record) in active.iter() {
-                if !next_active.contains_key(connection_id) {
-                    closed_records.push(previous_record.clone());
+            for (connection_id, previous_record) in previous_active {
+                if !active.contains_key(&connection_id) {
+                    closed_records.push(previous_record);
+                }
+            }
+            (opened_count, updated_count, closed_records)
+        };
+
+        let closed_count = closed_records.len();
+        self.push_recent_closed(closed_records).await;
+
+        {
+            let mut summary = self.summary.write().await;
+            *summary = next_summary;
+        }
+
+        if opened_count > 0 || updated_count > 0 || closed_count > 0 {
+            debug!(
+                opened = opened_count,
+                updated = updated_count,
+                closed = closed_count,
+                "realtime store snapshot updated"
+            );
+        }
+    }
+
+    /// Applies a precomputed snapshot diff without recalculating opened, updated, and closed sets.
+    pub async fn apply_diff(
+        &self,
+        next_active: HashMap<String, ConnectionRecord>,
+        closed_ids: &[String],
+        opened_count: usize,
+        updated_count: usize,
+    ) {
+        let next_summary = build_summary(next_active.values());
+
+        let closed_records = {
+            let mut active = self.active.write().await;
+            let mut previous_active = std::mem::replace(&mut *active, next_active);
+            let mut closed_records = Vec::with_capacity(closed_ids.len());
+
+            for closed_id in closed_ids {
+                if let Some(record) = previous_active.remove(closed_id) {
+                    closed_records.push(record);
                 }
             }
 
-            *active = next_active;
-            (opened_count, updated_count, closed_records)
+            closed_records
         };
 
         let closed_count = closed_records.len();
