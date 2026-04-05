@@ -9,6 +9,15 @@ export function useAppInit() {
   const [error, setError] = useState<string | null>(null);
   const configDir = useAppStore((s) => s.mihomoConfigDir);
 
+  const startCollectorQuietly = async () => {
+    try {
+      await api.collector.start();
+      console.log("[ClashMind] Collector 启动成功");
+    } catch (err) {
+      console.warn("[ClashMind] Collector 启动失败:", err);
+    }
+  };
+
   const initialize = async () => {
     try {
       setStatus("checking");
@@ -22,11 +31,13 @@ export function useAppInit() {
       setStatus("starting");
       await api.mihomo.start(configDir);
       setStatus("ready");
+      startCollectorQuietly();
     } catch (err) {
       // If sidecar is already running, that's fine
       const msg = String(err);
       if (msg.includes("已在运行")) {
         setStatus("ready");
+        startCollectorQuietly();
       } else {
         setError(msg);
         setStatus("error");
@@ -40,10 +51,12 @@ export function useAppInit() {
       await api.mihomo.ensureDefaultConfig(configDir);
       await api.mihomo.start(configDir);
       setStatus("ready");
+      startCollectorQuietly();
     } catch (err) {
       const msg = String(err);
       if (msg.includes("已在运行")) {
         setStatus("ready");
+        startCollectorQuietly();
       } else {
         setError(msg);
         setStatus("error");

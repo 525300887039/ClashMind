@@ -334,12 +334,6 @@ pub enum CollectorError {
     SnapshotParse(String),
     #[error("序列化代理链失败: {0}")]
     ProxyChainSerialize(String),
-    #[error("执行 app-store 读取脚本失败: {0}")]
-    EvalScript(String),
-    #[error("读取 app-store 超时")]
-    StoreReadTimedOut,
-    #[error("读取 app-store 失败: {0}")]
-    StoreReadFailed(String),
     #[error("等待采集任务结束失败: {0}")]
     TaskJoin(String),
 }

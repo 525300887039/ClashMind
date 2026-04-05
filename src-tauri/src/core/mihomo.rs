@@ -78,6 +78,10 @@ impl MihomoClient {
         self.secret = secret.to_string();
     }
 
+    pub fn connection_info(&self) -> (String, String) {
+        (self.base_url.clone(), self.secret.clone())
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
     }

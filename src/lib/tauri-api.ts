@@ -137,4 +137,9 @@ export const api = {
     updateMihomoClient: (baseUrl: string, secret: string) =>
       invoke("update_mihomo_client", { baseUrl, secret }),
   },
+  collector: {
+    start: () => invoke("start_collector"),
+    stop: () => invoke("stop_collector"),
+    status: () => invoke<boolean>("get_collector_status"),
+  },
 } as const;
