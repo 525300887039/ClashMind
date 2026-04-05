@@ -17,8 +17,12 @@ use tokio::sync::oneshot;
 const AI_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const AI_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 
-type PendingRpcRequests =
-    Arc<Mutex<HashMap<String, oneshot::Sender<Result<serde_json::Value, AiSidecarError>>>>>;
+enum PendingRpcRequest {
+    Unary(oneshot::Sender<Result<serde_json::Value, AiSidecarError>>),
+    Stream,
+}
+
+type PendingRpcRequests = Arc<Mutex<HashMap<String, PendingRpcRequest>>>;
 
 #[derive(Error, Debug)]
 pub enum SidecarError {
@@ -126,11 +130,39 @@ struct JsonRpcRequest<'a> {
     params: Option<serde_json::Value>,
 }
 
-fn fail_pending_requests(pending: &PendingRpcRequests, error: AiSidecarError) {
+fn stream_error_payload(error: &AiSidecarError) -> serde_json::Value {
+    serde_json::json!({
+        "type": "error",
+        "message": error.to_string(),
+    })
+}
+
+fn is_terminal_stream_event(payload: &serde_json::Value) -> bool {
+    payload
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|event_type| matches!(event_type, "done" | "error"))
+}
+
+fn fail_pending_requests(
+    app: Option<&AppHandle>,
+    pending: &PendingRpcRequests,
+    error: AiSidecarError,
+) {
     match pending.lock() {
         Ok(mut pending_requests) => {
-            for sender in pending_requests.drain().map(|(_, sender)| sender) {
-                let _ = sender.send(Err(error.clone()));
+            for pending_request in pending_requests.drain().map(|(_, pending_request)| pending_request)
+            {
+                match pending_request {
+                    PendingRpcRequest::Unary(sender) => {
+                        let _ = sender.send(Err(error.clone()));
+                    }
+                    PendingRpcRequest::Stream => {
+                        if let Some(app_handle) = app {
+                            let _ = app_handle.emit("ai-stream", stream_error_payload(&error));
+                        }
+                    }
+                }
             }
         }
         Err(lock_error) => {
@@ -203,26 +235,69 @@ fn handle_ai_stdout(
     }
 
     if let Some(request_id) = extract_response_id(&payload) {
-        let sender = match pending.lock() {
-            Ok(mut pending_requests) => pending_requests.remove(&request_id),
+        enum PendingAction {
+            None,
+            EmitStream(serde_json::Value),
+            EmitStreamError(AiSidecarError),
+        }
+
+        let action = match pending.lock() {
+            Ok(mut pending_requests) => match pending_requests.remove(&request_id) {
+                Some(PendingRpcRequest::Unary(sender)) => {
+                    if let Some(error_payload) = payload.get("error") {
+                        let error = parse_rpc_error(error_payload);
+                        let _ = sender.send(Err(error.clone()));
+                        PendingAction::None
+                    } else if let Some(result) = payload.get("result") {
+                        let _ = sender.send(Ok(result.clone()));
+                        PendingAction::None
+                    } else {
+                        let error = AiSidecarError::InvalidResponse(
+                            "missing result or error field".to_string(),
+                        );
+                        let _ = sender.send(Err(error.clone()));
+                        PendingAction::None
+                    }
+                }
+                Some(PendingRpcRequest::Stream) => {
+                    if let Some(error_payload) = payload.get("error") {
+                        PendingAction::EmitStreamError(parse_rpc_error(error_payload))
+                    } else if let Some(result) = payload.get("result") {
+                        let should_keep = !is_terminal_stream_event(result);
+                        let stream_payload = result.clone();
+
+                        if should_keep {
+                            pending_requests.insert(request_id.clone(), PendingRpcRequest::Stream);
+                        }
+
+                        PendingAction::EmitStream(stream_payload)
+                    } else {
+                        PendingAction::EmitStreamError(AiSidecarError::InvalidResponse(
+                            "missing result or error field".to_string(),
+                        ))
+                    }
+                }
+                None => {
+                    tracing::warn!(
+                        "[ai-service] received response for unknown request id: {request_id}"
+                    );
+                    PendingAction::None
+                }
+            },
             Err(lock_error) => {
                 tracing::error!("读取 ai-service pending 请求失败: {lock_error}");
-                None
+                PendingAction::None
             }
         };
 
-        if let Some(sender) = sender {
-            if let Some(error_payload) = payload.get("error") {
-                let _ = sender.send(Err(parse_rpc_error(error_payload)));
-            } else if let Some(result) = payload.get("result") {
-                let _ = sender.send(Ok(result.clone()));
-            } else {
-                let _ = sender.send(Err(AiSidecarError::InvalidResponse(
-                    "missing result or error field".to_string(),
-                )));
+        match action {
+            PendingAction::None => {}
+            PendingAction::EmitStream(stream_payload) => {
+                let _ = app.emit("ai-stream", stream_payload);
             }
-        } else {
-            tracing::warn!("[ai-service] received response for unknown request id: {request_id}");
+            PendingAction::EmitStreamError(error) => {
+                let _ = app.emit("ai-stream", stream_error_payload(&error));
+            }
         }
 
         return;
@@ -275,6 +350,7 @@ pub async fn start_ai(app: &AppHandle, state: &AiSidecarState) -> Result<(), AiS
                             let _ = sender.send(Err(AiSidecarError::ProcessExited(error.clone())));
                         }
                         fail_pending_requests(
+                            Some(&app_handle),
                             &pending_reader,
                             AiSidecarError::ProcessExited(error.clone()),
                         );
@@ -288,6 +364,7 @@ pub async fn start_ai(app: &AppHandle, state: &AiSidecarState) -> Result<(), AiS
                             let _ = sender.send(Err(AiSidecarError::ProcessExited(reason.clone())));
                         }
                         fail_pending_requests(
+                            Some(&app_handle),
                             &pending_reader,
                             AiSidecarError::ProcessExited(reason.clone()),
                         );
@@ -302,6 +379,7 @@ pub async fn start_ai(app: &AppHandle, state: &AiSidecarState) -> Result<(), AiS
                 let _ = sender.send(Err(AiSidecarError::ReadySignalDropped));
             }
             fail_pending_requests(
+                Some(&app_handle),
                 &pending_reader,
                 AiSidecarError::ProcessExited("stdout channel closed".to_string()),
             );
@@ -320,21 +398,21 @@ pub async fn start_ai(app: &AppHandle, state: &AiSidecarState) -> Result<(), AiS
     match tokio::time::timeout(AI_READY_TIMEOUT, ready_rx).await {
         Ok(Ok(Ok(()))) => Ok(()),
         Ok(Ok(Err(error))) => {
-            let _ = stop_ai(state);
+            let _ = stop_ai(Some(app), state);
             Err(error)
         }
         Ok(Err(_)) => {
-            let _ = stop_ai(state);
+            let _ = stop_ai(Some(app), state);
             Err(AiSidecarError::ReadySignalDropped)
         }
         Err(_) => {
-            let _ = stop_ai(state);
+            let _ = stop_ai(Some(app), state);
             Err(AiSidecarError::ReadyTimeout)
         }
     }
 }
 
-pub fn stop_ai(state: &AiSidecarState) -> Result<(), AiSidecarError> {
+pub fn stop_ai(app: Option<&AppHandle>, state: &AiSidecarState) -> Result<(), AiSidecarError> {
     let runtime = state
         .runtime
         .lock()
@@ -343,6 +421,7 @@ pub fn stop_ai(state: &AiSidecarState) -> Result<(), AiSidecarError> {
         .ok_or(AiSidecarError::NotRunning)?;
 
     fail_pending_requests(
+        app,
         &runtime.pending,
         AiSidecarError::ProcessExited("ai-service 已停止".to_string()),
     );
@@ -393,7 +472,7 @@ pub async fn send_rpc(
             .pending
             .lock()
             .map_err(|error| AiSidecarError::WriteFailed(error.to_string()))?
-            .insert(request_id.clone(), response_tx);
+            .insert(request_id.clone(), PendingRpcRequest::Unary(response_tx));
 
         if let Err(error) = runtime.child.write(payload.as_bytes()) {
             if let Ok(mut pending_requests) = runtime.pending.lock() {
@@ -417,6 +496,50 @@ pub async fn send_rpc(
             Err(AiSidecarError::ResponseTimeout)
         }
     }
+}
+
+pub fn send_streaming_rpc(
+    state: &AiSidecarState,
+    method: &str,
+    params: Option<serde_json::Value>,
+) -> Result<(), AiSidecarError> {
+    let request_id = state
+        .next_request_id
+        .fetch_add(1, Ordering::Relaxed)
+        .to_string();
+
+    let request = JsonRpcRequest {
+        jsonrpc: "2.0",
+        id: request_id.clone(),
+        method,
+        params,
+    };
+    let payload = format!(
+        "{}\n",
+        serde_json::to_string(&request)
+            .map_err(|error| AiSidecarError::InvalidResponse(error.to_string()))?
+    );
+
+    let mut runtime_guard = state
+        .runtime
+        .lock()
+        .map_err(|error| AiSidecarError::WriteFailed(error.to_string()))?;
+    let runtime = runtime_guard.as_mut().ok_or(AiSidecarError::NotRunning)?;
+
+    runtime
+        .pending
+        .lock()
+        .map_err(|error| AiSidecarError::WriteFailed(error.to_string()))?
+        .insert(request_id.clone(), PendingRpcRequest::Stream);
+
+    if let Err(error) = runtime.child.write(payload.as_bytes()) {
+        if let Ok(mut pending_requests) = runtime.pending.lock() {
+            pending_requests.remove(&request_id);
+        }
+        return Err(AiSidecarError::WriteFailed(error.to_string()));
+    }
+
+    Ok(())
 }
 
 pub fn start(app: &AppHandle, state: &SidecarState, config_path: &str) -> Result<(), SidecarError> {

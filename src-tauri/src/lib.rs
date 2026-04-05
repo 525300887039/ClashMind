@@ -60,6 +60,7 @@ pub fn run() {
             cmd::ai::stop_ai_service,
             cmd::ai::get_ai_status,
             cmd::ai::ai_ping,
+            cmd::ai::ai_chat,
             cmd::sidecar::start_mihomo,
             cmd::sidecar::stop_mihomo,
             cmd::sidecar::restart_mihomo,
@@ -133,7 +134,7 @@ pub fn run() {
                 }
 
                 let ai_sidecar_state = app.state::<AiSidecarState>();
-                match core::sidecar::stop_ai(&ai_sidecar_state) {
+                match core::sidecar::stop_ai(Some(app), &ai_sidecar_state) {
                     Ok(()) => tracing::info!("ai-service sidecar 已在退出时停止"),
                     Err(core::sidecar::AiSidecarError::NotRunning) => {}
                     Err(e) => tracing::warn!("退出时停止 ai-service 失败: {e}"),
