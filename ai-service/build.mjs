@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { arch, platform, tmpdir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -35,7 +35,7 @@ if (!triple) {
 }
 
 const isWindows = PLATFORM === "win32";
-const outfile = resolve(
+const outputFile = resolve(
   PROJECT_ROOT,
   "..",
   "src-tauri",
@@ -46,12 +46,36 @@ const tempDir = mkdtempSync(resolve(tmpdir(), "clashmind-ai-service-"));
 const bundleFile = resolve(tempDir, "ai-service.cjs");
 const blobFile = resolve(tempDir, "sea-prep.blob");
 const seaConfigFile = resolve(tempDir, "sea-config.json");
+const stagedExecutable = resolve(tempDir, basename(outputFile));
 const postjectCli = resolve(PROJECT_ROOT, "node_modules", "postject", "dist", "cli.js");
 
-mkdirSync(dirname(outfile), { recursive: true });
+mkdirSync(dirname(outputFile), { recursive: true });
 
 function cleanup() {
   rmSync(tempDir, { force: true, recursive: true });
+}
+
+function isLockedExecutableError(error) {
+  return isWindows && ["EACCES", "EBUSY", "EPERM"].includes(error?.code ?? "");
+}
+
+function publishExecutable() {
+  try {
+    copyFileSync(stagedExecutable, outputFile);
+    if (!isWindows) {
+      chmodSync(outputFile, 0o755);
+    }
+    return true;
+  } catch (error) {
+    if (WATCH_MODE && isLockedExecutableError(error)) {
+      console.warn(
+        `[ai-service] skip publishing because ${outputFile} is locked by a running process`,
+      );
+      return false;
+    }
+
+    throw error;
+  }
 }
 
 function packageExecutable() {
@@ -74,11 +98,11 @@ function packageExecutable() {
     stdio: "inherit",
   });
 
-  copyFileSync(process.execPath, outfile);
+  copyFileSync(process.execPath, stagedExecutable);
 
   const postjectArgs = [
     postjectCli,
-    outfile,
+    stagedExecutable,
     "NODE_SEA_BLOB",
     blobFile,
     "--sentinel-fuse",
@@ -91,9 +115,7 @@ function packageExecutable() {
 
   execFileSync(process.execPath, postjectArgs, { stdio: "inherit" });
 
-  if (!isWindows) {
-    chmodSync(outfile, 0o755);
-  }
+  return publishExecutable();
 }
 
 const seaPackagingPlugin = {
@@ -104,8 +126,9 @@ const seaPackagingPlugin = {
         return;
       }
 
-      packageExecutable();
-      console.log(`Built ai-service executable: ${outfile}`);
+      if (packageExecutable()) {
+        console.log(`Built ai-service executable: ${outputFile}`);
+      }
     });
   },
 };
@@ -136,7 +159,7 @@ process.on("SIGTERM", () => {
 if (WATCH_MODE) {
   const buildContext = await context(buildOptions);
   await buildContext.watch();
-  console.log(`Watching ai-service sources -> ${outfile}`);
+  console.log(`Watching ai-service sources -> ${outputFile}`);
 } else {
   await build(buildOptions);
 }

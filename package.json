@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:tauri": "pnpm --filter ai-service build && pnpm dev",
     "build": "tsc -b && vite build",
+    "build:tauri": "pnpm --filter ai-service build && pnpm build",
     "preview": "vite preview",
     "tauri": "tauri",
     "lint": "eslint .",
