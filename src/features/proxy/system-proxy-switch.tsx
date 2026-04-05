@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Shield, ShieldOff } from "lucide-react";
 import { api } from "@/lib/tauri-api";
 import { cn } from "@/lib/utils";
+import { useAppStore } from "@/stores/app-store";
 
 const SYSPROXY_KEY = ["system-proxy"] as const;
 
@@ -24,10 +25,10 @@ function useToggleSystemProxy() {
 export function SystemProxySwitch() {
   const { data } = useSystemProxy();
   const toggle = useToggleSystemProxy();
+  const httpPort = useAppStore((s) => s.httpPort);
 
   const enabled = data?.enable ?? false;
-  // Use port 7890 as default (mihomo HTTP proxy port)
-  const port = data?.port || 7890;
+  const port = httpPort || 7890;
 
   return (
     <button
