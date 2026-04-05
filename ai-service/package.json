@@ -4,7 +4,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch"
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "esbuild": "^0.28.0",
+    "postject": "1.0.0-alpha.6",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.24",
+    "@ai-sdk/deepseek": "^1.0.24",
+    "@ai-sdk/openai": "^2.0.30",
+    "ai": "^5.0.100",
+    "js-yaml": "^4.1.0",
+    "ollama-ai-provider": "^1.2.0",
+    "zod": "^3.25.76"
   }
 }

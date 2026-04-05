@@ -11,7 +11,7 @@ use tauri::Manager;
 
 use cmd::MihomoState;
 use collector::{CollectorError, CollectorShutdown, CollectorState, RealtimeStore};
-use core::sidecar::SidecarState;
+use core::sidecar::{AiSidecarState, SidecarState};
 use utils::geoip::{
     default_mihomo_config_dir, resolve_country_mmdb_path, GeoIpConfigState, GeoIpLookup,
 };
@@ -42,6 +42,7 @@ pub fn run() {
             log_task: Mutex::new(None),
             traffic_task: Mutex::new(None),
         })
+        .manage(AiSidecarState::new())
         .manage(GeoIpConfigState::new(default_mihomo_config_dir()))
         .manage(GeoIpLookup::new(resolve_country_mmdb_path(
             &default_mihomo_config_dir(),
@@ -55,6 +56,10 @@ pub fn run() {
         .manage(CollectorState::default())
         .manage(RealtimeStore::default())
         .invoke_handler(tauri::generate_handler![
+            cmd::ai::start_ai_service,
+            cmd::ai::stop_ai_service,
+            cmd::ai::get_ai_status,
+            cmd::ai::ai_ping,
             cmd::sidecar::start_mihomo,
             cmd::sidecar::stop_mihomo,
             cmd::sidecar::restart_mihomo,
@@ -125,6 +130,13 @@ pub fn run() {
                 match core::sidecar::stop(&sidecar_state) {
                     Ok(()) => tracing::info!("mihomo sidecar 已在退出时停止"),
                     Err(e) => tracing::warn!("退出时停止 mihomo 失败: {e}"),
+                }
+
+                let ai_sidecar_state = app.state::<AiSidecarState>();
+                match core::sidecar::stop_ai(&ai_sidecar_state) {
+                    Ok(()) => tracing::info!("ai-service sidecar 已在退出时停止"),
+                    Err(core::sidecar::AiSidecarError::NotRunning) => {}
+                    Err(e) => tracing::warn!("退出时停止 ai-service 失败: {e}"),
                 }
             }
         });

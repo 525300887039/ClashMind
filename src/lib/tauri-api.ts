@@ -86,6 +86,11 @@ export interface GeoStat {
   totalTraffic: number;
 }
 
+export interface AiPingResponse {
+  pong: boolean;
+  timestamp: number;
+}
+
 export const api = {
   mihomo: {
     start: (configPath: string) => invoke("start_mihomo", { configPath }),
@@ -94,6 +99,12 @@ export const api = {
     status: () => invoke<boolean>("get_mihomo_status"),
     checkConfig: (configPath: string) => invoke<boolean>("check_config_exists", { configPath }),
     ensureDefaultConfig: (configPath: string) => invoke("ensure_default_config", { configPath }),
+  },
+  ai: {
+    start: () => invoke("start_ai_service"),
+    stop: () => invoke("stop_ai_service"),
+    status: () => invoke<boolean>("get_ai_status"),
+    ping: () => invoke<AiPingResponse>("ai_ping"),
   },
   proxy: {
     getAll: () => invoke<ProxiesResponse>("get_proxies"),
