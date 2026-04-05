@@ -2,7 +2,7 @@ use tauri::AppHandle;
 
 use crate::{
     core::sidecar::{self, SidecarError, SidecarState},
-    utils::geoip::GeoIpConfigState,
+    utils::{geoip::GeoIpConfigState, path::expand_tilde},
 };
 
 /// Abort old log/traffic tasks and start fresh subscriptions.
@@ -37,6 +37,7 @@ pub fn start_mihomo(
     geoip_config: tauri::State<'_, GeoIpConfigState>,
     config_path: String,
 ) -> Result<(), SidecarError> {
+    let config_path = expand_tilde(&config_path);
     geoip_config.set_config_dir(config_path.clone());
     sidecar::start(&app, &state, &config_path)?;
     restart_subscriptions(app, &state)
@@ -54,6 +55,7 @@ pub fn restart_mihomo(
     geoip_config: tauri::State<'_, GeoIpConfigState>,
     config_path: String,
 ) -> Result<(), SidecarError> {
+    let config_path = expand_tilde(&config_path);
     geoip_config.set_config_dir(config_path.clone());
     sidecar::restart(&app, &state, &config_path)?;
     restart_subscriptions(app, &state)
@@ -67,6 +69,7 @@ pub fn get_mihomo_status(state: tauri::State<'_, SidecarState>) -> Result<bool, 
 /// Check if a mihomo config directory has a valid config.yaml with external-controller
 #[tauri::command]
 pub fn check_config_exists(config_path: String) -> Result<bool, SidecarError> {
+    let config_path = expand_tilde(&config_path);
     let config_file = std::path::Path::new(&config_path).join("config.yaml");
     if !config_file.exists() {
         return Ok(false);
@@ -82,6 +85,7 @@ pub fn ensure_default_config(
     geoip_config: tauri::State<'_, GeoIpConfigState>,
     config_path: String,
 ) -> Result<(), SidecarError> {
+    let config_path = expand_tilde(&config_path);
     geoip_config.set_config_dir(config_path.clone());
     let dir = std::path::Path::new(&config_path);
     if !dir.exists() {

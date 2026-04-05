@@ -1,4 +1,5 @@
 use crate::core::mihomo::MihomoError;
+use crate::utils::path::expand_tilde;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -19,15 +20,6 @@ impl Serialize for ConfigError {
     {
         serializer.serialize_str(&self.to_string())
     }
-}
-
-fn expand_tilde(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix('~') {
-        if let Some(home) = dirs::home_dir() {
-            return format!("{}{rest}", home.display());
-        }
-    }
-    path.to_string()
 }
 
 #[tauri::command]
