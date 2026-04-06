@@ -1,7 +1,18 @@
 import { create } from "zustand";
-import type { AiChatRole } from "@/lib/tauri-api";
+import {
+  isPendingConfigChangeResult,
+  type AiChatRole,
+  type ConfigApplyPayload,
+} from "@/lib/tauri-api";
 
-export type AiToolCallStatus = "pending" | "executing" | "completed" | "error";
+export type AiToolCallStatus =
+  | "pending"
+  | "executing"
+  | "awaiting_confirmation"
+  | "completed"
+  | "applied"
+  | "rejected"
+  | "error";
 
 export interface AiToolCall {
   id: string;
@@ -36,12 +47,24 @@ interface AiStore {
   isLoading: boolean;
   error: string | null;
   activeStreamMessageId: string | null;
+  configApplyPayloads: Record<string, ConfigApplyPayload>;
   addMessage: (message: AddMessageInput) => string;
   appendToMessage: (messageId: string, content: string) => void;
   upsertToolCall: (messageId: string, toolCall: AiToolCall) => void;
   setToolCallResult: (messageId: string, toolCallId: string, result: unknown) => void;
   finalizeStream: (messageId: string, options?: FinalizeStreamOptions) => void;
   removeMessage: (messageId: string) => void;
+  setToolCallStatus: (toolCallId: string, status: AiToolCallStatus) => void;
+  setConfigConfirmationBatchStatus: (
+    confirmationBatchId: string,
+    status: AiToolCallStatus,
+  ) => void;
+  setConfigApplyPayload: (
+    confirmationBatchId: string,
+    payload: ConfigApplyPayload,
+  ) => void;
+  getConfigApplyPayload: (confirmationBatchId: string) => ConfigApplyPayload | null;
+  clearConfigApplyPayload: (confirmationBatchId: string) => void;
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
   setActiveStreamMessageId: (messageId: string | null) => void;
@@ -52,11 +75,12 @@ function createId() {
   return crypto.randomUUID();
 }
 
-export const useAiStore = create<AiStore>()((set) => ({
+export const useAiStore = create<AiStore>()((set, get) => ({
   messages: [],
   isLoading: false,
   error: null,
   activeStreamMessageId: null,
+  configApplyPayloads: {},
   addMessage: (message) => {
     const id = createId();
     set((state) => ({
@@ -111,6 +135,10 @@ export const useAiStore = create<AiStore>()((set) => ({
     }));
   },
   setToolCallResult: (messageId, toolCallId, result) => {
+    const nextStatus = isPendingConfigChangeResult(result)
+      ? "awaiting_confirmation"
+      : "completed";
+
     set((state) => ({
       messages: state.messages.map((message) => {
         if (message.id !== messageId) {
@@ -128,7 +156,7 @@ export const useAiStore = create<AiStore>()((set) => ({
                 name: "tool",
                 input: {},
                 result,
-                status: "completed",
+                status: nextStatus,
               },
             ],
           };
@@ -143,7 +171,7 @@ export const useAiStore = create<AiStore>()((set) => ({
         nextToolCalls[toolCallIndex] = {
           ...existingToolCall,
           result,
-          status: "completed",
+          status: nextStatus,
         };
 
         return { ...message, toolCalls: nextToolCalls };
@@ -177,6 +205,54 @@ export const useAiStore = create<AiStore>()((set) => ({
       messages: state.messages.filter((message) => message.id !== messageId),
     }));
   },
+  setToolCallStatus: (toolCallId, status) => {
+    set((state) => ({
+      messages: state.messages.map((message) => ({
+        ...message,
+        toolCalls: message.toolCalls.map((toolCall) =>
+          toolCall.id === toolCallId ? { ...toolCall, status } : toolCall,
+        ),
+      })),
+    }));
+  },
+  setConfigConfirmationBatchStatus: (confirmationBatchId, status) => {
+    set((state) => ({
+      configApplyPayloads:
+        status === "applied" || status === "rejected"
+          ? Object.fromEntries(
+              Object.entries(state.configApplyPayloads).filter(
+                ([batchId]) => batchId !== confirmationBatchId,
+              ),
+            )
+          : state.configApplyPayloads,
+      messages: state.messages.map((message) => ({
+        ...message,
+        toolCalls: message.toolCalls.map((toolCall) =>
+          isPendingConfigChangeResult(toolCall.result) &&
+          toolCall.result.confirmationBatchId === confirmationBatchId
+            ? { ...toolCall, status }
+            : toolCall,
+        ),
+      })),
+    }));
+  },
+  setConfigApplyPayload: (confirmationBatchId, payload) =>
+    set((state) => ({
+      configApplyPayloads: {
+        ...state.configApplyPayloads,
+        [confirmationBatchId]: payload,
+      },
+    })),
+  getConfigApplyPayload: (confirmationBatchId) =>
+    get().configApplyPayloads[confirmationBatchId] ?? null,
+  clearConfigApplyPayload: (confirmationBatchId) =>
+    set((state) => ({
+      configApplyPayloads: Object.fromEntries(
+        Object.entries(state.configApplyPayloads).filter(
+          ([batchId]) => batchId !== confirmationBatchId,
+        ),
+      ),
+    })),
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
   setActiveStreamMessageId: (activeStreamMessageId) => set({ activeStreamMessageId }),
@@ -186,5 +262,6 @@ export const useAiStore = create<AiStore>()((set) => ({
       isLoading: false,
       error: null,
       activeStreamMessageId: null,
+      configApplyPayloads: {},
     }),
 }));

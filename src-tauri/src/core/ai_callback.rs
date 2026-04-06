@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use chrono::{Duration as ChronoDuration, Utc};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -7,7 +9,7 @@ use crate::{
     collector::{CollectorState, RealtimeStore},
     core::sidecar::AiSidecarError,
     db::{self, repo_connection},
-    utils::time,
+    utils::{geoip::GeoIpConfigState, path::expand_tilde, time},
 };
 
 const DEFAULT_DELAY_TEST_URL: &str = "http://www.gstatic.com/generate_204";
@@ -242,6 +244,32 @@ fn redact_sensitive_config(value: serde_json::Value) -> serde_json::Value {
     }
 }
 
+fn active_config_file_path(app: &AppHandle) -> std::path::PathBuf {
+    let geoip_config = app.state::<GeoIpConfigState>();
+    Path::new(&expand_tilde(&geoip_config.config_dir())).join("config.yaml")
+}
+
+async fn read_active_config_file(app: &AppHandle) -> Result<String, AiSidecarError> {
+    let config_file = active_config_file_path(app);
+
+    tokio::fs::read_to_string(&config_file)
+        .await
+        .map_err(|error| invalid_callback(format!("读取配置文件失败: {error}")))
+}
+
+fn parse_config_yaml(yaml_content: &str) -> Result<serde_json::Value, AiSidecarError> {
+    serde_yaml::from_str::<serde_json::Value>(yaml_content)
+        .map_err(|error| invalid_callback(format!("解析配置文件失败: {error}")))
+}
+
+fn build_sanitized_config_response(source: &str, config: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "source": source,
+        "sanitized": true,
+        "config": redact_sensitive_config(config),
+    })
+}
+
 async fn with_mihomo_client<F, T>(app: &AppHandle, callback: F) -> Result<T, AiSidecarError>
 where
     F: for<'a> FnOnce(
@@ -261,20 +289,43 @@ where
         .map_err(|error| invalid_callback(error.to_string()))
 }
 
+async fn read_runtime_config(app: &AppHandle) -> Result<serde_json::Value, AiSidecarError> {
+    with_mihomo_client(app, |client| Box::pin(client.get_configs())).await
+}
+
 pub async fn handle_callback(
     app: &AppHandle,
     request: AiCallbackRequest,
 ) -> Result<serde_json::Value, AiSidecarError> {
     match request.method.as_str() {
         "get_config" => {
-            let config = with_mihomo_client(app, |client| Box::pin(client.get_configs())).await?;
-            let sanitized_config = redact_sensitive_config(config);
-            Ok(serde_json::json!({
-                "source": "mihomo_runtime",
-                "sanitized": true,
-                "config": sanitized_config,
-            }))
+            match read_runtime_config(app).await {
+                Ok(config) => Ok(build_sanitized_config_response("mihomo_runtime", config)),
+                Err(runtime_error) => {
+                    let yaml_content = read_active_config_file(app)
+                        .await
+                        .map_err(|file_error| {
+                            invalid_callback(format!(
+                                "读取 Mihomo 运行配置失败: {runtime_error}; 同时读取配置文件失败: {file_error}"
+                            ))
+                        })?;
+                    let config = parse_config_yaml(&yaml_content).map_err(|file_error| {
+                        invalid_callback(format!(
+                            "读取 Mihomo 运行配置失败: {runtime_error}; 同时解析配置文件失败: {file_error}"
+                        ))
+                    })?;
+
+                    Ok(build_sanitized_config_response("config_file", config))
+                }
+            }
         }
+        "get_config_file" => {
+            let yaml_content = read_active_config_file(app).await?;
+            let config = parse_config_yaml(&yaml_content)?;
+            Ok(build_sanitized_config_response("config_file", config))
+        }
+        "read_active_config_file" => Ok(serde_json::Value::String(read_active_config_file(app).await?)),
+        "read_active_runtime_config" => read_runtime_config(app).await,
         "get_proxies" => with_mihomo_client(app, |client| Box::pin(client.get_proxies())).await,
         "test_delay" => {
             let params = parse_params::<DelayParams>(request.params)?;

@@ -1,9 +1,11 @@
 import { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { Bot, Settings2, Sparkles, Trash2, Wrench } from "lucide-react";
+import { Toaster } from "sonner";
 import { ChatInput } from "./chat-input";
 import { ChatMessage } from "./chat-message";
 import { useAiChat } from "./hooks/use-ai-chat";
+import { SnapshotList } from "./snapshot-list";
 import { useAppStore } from "@/stores/app-store";
 import { cn } from "@/lib/utils";
 
@@ -60,6 +62,8 @@ export function ChatPanel() {
       transition={{ duration: 0.28, ease: "easeOut" }}
       className="flex h-[calc(100vh-5rem)] flex-col gap-4"
     >
+      <Toaster position="top-center" richColors />
+
       <header className="relative overflow-hidden rounded-[2rem] border border-border/70 bg-linear-to-br from-primary/14 via-background to-background p-6 shadow-[0_28px_100px_-50px_rgba(15,23,42,0.65)]">
         <div className="pointer-events-none absolute -right-10 top-0 size-40 rounded-full bg-primary/12 blur-3xl" />
         <div className="pointer-events-none absolute bottom-0 left-0 h-24 w-56 bg-linear-to-r from-primary/10 to-transparent" />
@@ -188,7 +192,7 @@ export function ChatPanel() {
           </div>
         </div>
 
-        <aside className="hidden min-h-0 flex-col gap-3 xl:flex">
+        <aside className="flex min-h-0 flex-col gap-3">
           {CAPABILITY_CARDS.map(({ title, description, icon: Icon }, index) => (
             <motion.article
               key={title}
@@ -207,6 +211,8 @@ export function ChatPanel() {
               </div>
             </motion.article>
           ))}
+
+          <SnapshotList />
         </aside>
       </div>
     </motion.section>

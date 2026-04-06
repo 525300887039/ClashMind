@@ -3,8 +3,17 @@ import { z } from "zod";
 
 import { assemblePrompt } from "./prompts/index.js";
 import { createModel } from "./providers/index.js";
+import {
+  type ConfigDiff,
+  generateDiff,
+  generateDiffFromConfigDocument,
+  isPendingConfigChange,
+  type ValidationError,
+  type ValidationResult,
+  validateBeforeApply,
+} from "./safety/index.js";
 import { allTools } from "./tools/index.js";
-import { handleRustCallbackResponse } from "./tools/rust-rpc.js";
+import { handleRustCallbackResponse, requestFromRust } from "./tools/rust-rpc.js";
 import {
   chatParamsSchema,
   type ChatParams,
@@ -34,6 +43,19 @@ type JsonRpcHandler = (
   params: JsonRpcParams,
   context: JsonRpcHandlerContext,
 ) => Promise<JsonRpcHandlerResult>;
+
+interface ConfigApplyPayload {
+  originalConfig: string;
+  modifiedConfig: string;
+}
+
+interface SanitizedConfigResponse {
+  source: string;
+  sanitized: boolean;
+  config: Record<string, unknown>;
+}
+
+const REDACTED_VALUE = "<redacted>";
 
 export interface JsonRpcError {
   code: number;
@@ -119,7 +141,115 @@ function getErrorMessage(error: unknown): string {
 }
 
 function normalizeToolInput(input: unknown): Record<string, unknown> {
-  return isObjectRecord(input) ? input : { value: input };
+  return redactSensitiveValue(isObjectRecord(input) ? input : { value: input });
+}
+
+function normalizeConfigKey(key: string): string {
+  return key
+    .split("")
+    .filter((character) => /[a-zA-Z0-9]/.test(character))
+    .join("")
+    .toLowerCase();
+}
+
+function isSensitiveConfigKey(key: string): boolean {
+  return [
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "uuid",
+    "apikey",
+    "privatekey",
+    "auth",
+    "authstr",
+    "authorization",
+    "clientsecret",
+    "users",
+  ].includes(normalizeConfigKey(key));
+}
+
+function redactSensitiveValue<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitiveValue(item)) as T;
+  }
+
+  if (isObjectRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entryValue]) => [
+        key,
+        isSensitiveConfigKey(key) ? REDACTED_VALUE : redactSensitiveValue(entryValue),
+      ]),
+    ) as T;
+  }
+
+  return value;
+}
+
+function isSanitizedConfigResponse(value: unknown): value is SanitizedConfigResponse {
+  return (
+    isObjectRecord(value) &&
+    typeof value.source === "string" &&
+    typeof value.sanitized === "boolean" &&
+    isObjectRecord(value.config)
+  );
+}
+
+function formatValidationError(issue: ValidationError): string {
+  return issue.path.length === 0 ? issue.message : `${issue.path}: ${issue.message}`;
+}
+
+function createValidationFailureError(validation: ValidationResult): Error {
+  const detail = validation.errors.map(formatValidationError).join("; ");
+  return new Error(detail.length > 0 ? `配置校验失败: ${detail}` : "配置校验失败");
+}
+
+async function buildPendingConfigPreview(
+  toolResults: Parameters<typeof generateDiffFromConfigDocument>[1],
+): Promise<{
+  diff: ConfigDiff;
+  applyPayload: ConfigApplyPayload;
+  validation: ValidationResult;
+}> {
+  const sanitizedToolResults =
+    redactSensitiveValue(structuredClone(toolResults)) as Parameters<
+      typeof generateDiffFromConfigDocument
+    >[1];
+  const [configFileContent, sanitizedConfigResponse] = await Promise.all([
+    requestFromRust<string>("read_active_config_file"),
+    requestFromRust<SanitizedConfigResponse>("get_config_file"),
+  ]);
+
+  if (typeof configFileContent !== "string") {
+    throw new Error("active config file response is invalid");
+  }
+
+  if (!isSanitizedConfigResponse(sanitizedConfigResponse)) {
+    throw new Error("sanitized config file response is invalid");
+  }
+
+  const applyDiff = generateDiff(configFileContent, toolResults);
+  const applyValidation = validateBeforeApply(
+    configFileContent,
+    applyDiff.modified,
+  );
+  if (!applyValidation.valid) {
+    throw createValidationFailureError(applyValidation);
+  }
+
+  const previewDiff = generateDiffFromConfigDocument(
+    sanitizedConfigResponse.config,
+    sanitizedToolResults,
+  );
+
+  return {
+    diff: previewDiff,
+    applyPayload: {
+      originalConfig: configFileContent,
+      modifiedConfig: applyDiff.modified,
+    },
+    validation: applyValidation,
+  };
 }
 
 registerHandler("chat", async (params, context) => {
@@ -143,6 +273,11 @@ registerHandler("chat", async (params, context) => {
   });
 
   try {
+    const pendingConfigChanges: Array<{
+      toolCallId: string;
+      change: Parameters<typeof generateDiffFromConfigDocument>[1][number];
+    }> = [];
+    let confirmationBatchId: string | null = null;
     for await (const chunk of result.fullStream) {
       let event: StreamEvent | null = null;
 
@@ -162,6 +297,38 @@ registerHandler("chat", async (params, context) => {
           };
           break;
         case "tool-result":
+          if (isPendingConfigChange(chunk.output)) {
+            pendingConfigChanges.push({
+              toolCallId: chunk.toolCallId,
+              change: chunk.output,
+            });
+
+            confirmationBatchId ??= crypto.randomUUID();
+            const { diff, applyPayload, validation } = await buildPendingConfigPreview(
+              pendingConfigChanges.map((item) => item.change),
+            );
+
+            for (const pendingChange of pendingConfigChanges) {
+              const sanitizedPendingChange = redactSensitiveValue(
+                structuredClone(pendingChange.change),
+              );
+              context.writeResult({
+                type: "tool_result",
+                id: pendingChange.toolCallId,
+                content: {
+                  ...sanitizedPendingChange,
+                  diff,
+                  applyPayload,
+                  validation,
+                  confirmationBatchId,
+                  confirmationBatchSize: pendingConfigChanges.length,
+                  isLatestInBatch: pendingChange.toolCallId === chunk.toolCallId,
+                },
+              } satisfies StreamEvent);
+            }
+            break;
+          }
+
           event = {
             type: "tool_result",
             id: chunk.toolCallId,

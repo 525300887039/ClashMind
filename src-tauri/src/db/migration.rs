@@ -180,6 +180,41 @@ CREATE INDEX IF NOT EXISTS idx_ip_traffic_daily_dst_ip ON ip_traffic_daily(dst_i
 "#,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 11,
+            description: "create_config_snapshots_table",
+            sql: r#"
+CREATE TABLE IF NOT EXISTS config_snapshots (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    content     TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    description TEXT,
+    file_path   TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_snapshots_created_at ON config_snapshots(created_at);
+"#,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 12,
+            description: "create_ai_conversations_table",
+            sql: r#"
+CREATE TABLE IF NOT EXISTS ai_conversations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    role        TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    tool_calls  TEXT,
+    tokens_used INTEGER,
+    model       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_created_at ON ai_conversations(created_at);
+"#,
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -438,5 +473,71 @@ WHERE id = 'closed-conn';
             closed_last_observed_at.get::<String, _>("last_observed_at"),
             "2026-03-01T10:00:00Z"
         );
+    }
+
+    #[tokio::test]
+    async fn config_snapshots_migration_is_idempotent() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await;
+        assert!(pool.is_ok());
+        let Ok(pool) = pool else {
+            panic!("sqlite pool should be created");
+        };
+
+        let first_run = execute_migration(11, &pool).await;
+        assert!(first_run.is_ok());
+        let second_run = execute_migration(11, &pool).await;
+        assert!(second_run.is_ok());
+
+        let table_exists = sqlx::query_scalar::<_, i64>(
+            r#"
+SELECT COUNT(*)
+FROM sqlite_master
+WHERE type = 'table' AND name = 'config_snapshots';
+"#,
+        )
+        .fetch_one(&pool)
+        .await;
+        assert!(table_exists.is_ok());
+        let Ok(table_exists) = table_exists else {
+            panic!("config_snapshots table should be queryable");
+        };
+
+        assert_eq!(table_exists, 1);
+    }
+
+    #[tokio::test]
+    async fn ai_conversations_migration_is_idempotent() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await;
+        assert!(pool.is_ok());
+        let Ok(pool) = pool else {
+            panic!("sqlite pool should be created");
+        };
+
+        let first_run = execute_migration(12, &pool).await;
+        assert!(first_run.is_ok());
+        let second_run = execute_migration(12, &pool).await;
+        assert!(second_run.is_ok());
+
+        let index_exists = sqlx::query_scalar::<_, i64>(
+            r#"
+SELECT COUNT(*)
+FROM sqlite_master
+WHERE type = 'index' AND name = 'idx_conversations_created_at';
+"#,
+        )
+        .fetch_one(&pool)
+        .await;
+        assert!(index_exists.is_ok());
+        let Ok(index_exists) = index_exists else {
+            panic!("ai_conversations index should be queryable");
+        };
+
+        assert_eq!(index_exists, 1);
     }
 }

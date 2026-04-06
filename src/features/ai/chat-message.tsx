@@ -1,6 +1,6 @@
 import * as Accordion from "@radix-ui/react-accordion";
 import { motion } from "framer-motion";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -9,11 +9,17 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock3,
+  FileCheck2,
+  FileClock,
   type LucideIcon,
   TriangleAlert,
   UserRound,
   Wrench,
+  XCircle,
 } from "lucide-react";
+import { ConfigDiffPreview } from "./config-diff-preview";
+import { useConfigApply } from "./hooks/use-config-apply";
+import { isPendingConfigChangeResult } from "@/lib/tauri-api";
 import { cn } from "@/lib/utils";
 import type { AiMessage, AiToolCall } from "@/stores/ai-store";
 
@@ -80,10 +86,25 @@ const TOOL_STATUS_META: Record<
     className: "border-primary/20 bg-primary/10 text-primary",
     icon: Wrench,
   },
+  awaiting_confirmation: {
+    label: "待确认",
+    className: "border-cyan-500/25 bg-cyan-500/10 text-cyan-300",
+    icon: FileClock,
+  },
   completed: {
     label: "已完成",
     className: "border-emerald-500/20 bg-emerald-500/10 text-emerald-400",
     icon: CheckCircle2,
+  },
+  applied: {
+    label: "已应用",
+    className: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
+    icon: FileCheck2,
+  },
+  rejected: {
+    label: "已取消",
+    className: "border-slate-500/20 bg-slate-500/10 text-slate-300",
+    icon: XCircle,
   },
   error: {
     label: "失败",
@@ -136,9 +157,50 @@ function StructuredPanel({
   );
 }
 
+function PendingConfigToolResult({ toolCall }: { toolCall: AiToolCall }) {
+  const pendingResult = isPendingConfigChangeResult(toolCall.result) ? toolCall.result : null;
+
+  if (pendingResult === null) {
+    return null;
+  }
+
+  const { apply, reject, isApplying, isRejecting, error } = useConfigApply(
+    toolCall.id,
+    pendingResult.confirmationBatchId,
+  );
+
+  if (!pendingResult.isLatestInBatch) {
+    const batchMessage =
+      toolCall.status === "applied"
+        ? `这项修改已随同本轮共 ${pendingResult.confirmationBatchSize} 项配置变更一起应用。`
+        : toolCall.status === "rejected"
+          ? `这项修改已随同本轮共 ${pendingResult.confirmationBatchSize} 项配置变更一起丢弃。`
+          : `这项修改已合并到本轮最终预览；请在本轮最后一项中统一确认，共 ${pendingResult.confirmationBatchSize} 项配置变更。`;
+
+    return (
+      <div className="rounded-[1rem] border border-border/70 bg-muted/25 px-4 py-3 text-sm leading-6 text-muted-foreground">
+        {batchMessage}
+      </div>
+    );
+  }
+
+  return (
+    <ConfigDiffPreview
+      diff={pendingResult.diff}
+      onConfirm={apply}
+      onReject={reject}
+      isApplying={isApplying}
+      isRejecting={isRejecting}
+      error={error}
+      status={toolCall.status}
+    />
+  );
+}
+
 function ToolCallCard({ toolCall }: { toolCall: AiToolCall }) {
   const meta = TOOL_STATUS_META[toolCall.status];
   const StatusIcon = meta.icon;
+  const hasPendingDiff = isPendingConfigChangeResult(toolCall.result);
 
   return (
     <Accordion.Item
@@ -171,14 +233,22 @@ function ToolCallCard({ toolCall }: { toolCall: AiToolCall }) {
       </Accordion.Header>
 
       <Accordion.Content className="overflow-hidden border-t border-border/70 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-        <div className="grid gap-3 p-4 xl:grid-cols-2">
-          <StructuredPanel label="参数" content={formatStructuredValue(toolCall.input)} />
-          <StructuredPanel
-            label="结果"
-            content={
-              toolCall.result === undefined ? "等待工具返回结果..." : formatStructuredValue(toolCall.result)
-            }
-          />
+        <div className="space-y-3 p-4">
+          <div className={cn("grid gap-3", hasPendingDiff ? "xl:grid-cols-1" : "xl:grid-cols-2")}>
+            <StructuredPanel label="参数" content={formatStructuredValue(toolCall.input)} />
+            {!hasPendingDiff ? (
+              <StructuredPanel
+                label="结果"
+                content={
+                  toolCall.result === undefined
+                    ? "等待工具返回结果..."
+                    : formatStructuredValue(toolCall.result)
+                }
+              />
+            ) : null}
+          </div>
+
+          {hasPendingDiff ? <PendingConfigToolResult toolCall={toolCall} /> : null}
         </div>
       </Accordion.Content>
     </Accordion.Item>
@@ -226,12 +296,33 @@ function MessageBody({ message }: { message: AiMessage }) {
 }
 
 function ToolCalls({ toolCalls }: { toolCalls: AiToolCall[] }) {
+  const pendingToolCallIds = toolCalls
+    .filter((toolCall) => toolCall.status === "awaiting_confirmation")
+    .map((toolCall) => toolCall.id);
+  const pendingToolCallKey = pendingToolCallIds.join("::");
+  const [expandedItems, setExpandedItems] = useState<string[]>(pendingToolCallIds);
+
+  useEffect(() => {
+    if (pendingToolCallIds.length === 0) {
+      return;
+    }
+
+    setExpandedItems((currentValue) => [
+      ...new Set([...currentValue, ...pendingToolCallIds]),
+    ]);
+  }, [pendingToolCallKey]);
+
   if (toolCalls.length === 0) {
     return null;
   }
 
   return (
-    <Accordion.Root type="multiple" className="mt-4 space-y-2">
+    <Accordion.Root
+      type="multiple"
+      value={expandedItems}
+      onValueChange={setExpandedItems}
+      className="mt-4 space-y-2"
+    >
       {toolCalls.map((toolCall) => (
         <ToolCallCard key={toolCall.id} toolCall={toolCall} />
       ))}

@@ -1,7 +1,22 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { pendingConfirmation, requestFromRust } from "./rust-rpc.js";
+import {
+  createValidationErrorResult,
+  type ValidationErrorResult,
+  type ValidationResult,
+  validateDnsFragment,
+  validateModeFragment,
+  validateProxyFragment,
+  validateProxyGroupFragment,
+  validateProxyGroupUpdateFragment,
+  validateRuleFragment,
+} from "../safety/index.js";
+import {
+  pendingConfirmation,
+  type PendingConfirmationResult,
+  requestFromRust,
+} from "./rust-rpc.js";
 
 const emptyParameters = z.object({}).strict();
 
@@ -107,6 +122,98 @@ const setModeParameters = z
   })
   .strict();
 
+type AddProxyParameters = z.infer<typeof addProxyParameters>;
+type RemoveProxyParameters = z.infer<typeof removeProxyParameters>;
+type AddProxyGroupParameters = z.infer<typeof addProxyGroupParameters>;
+type UpdateProxyGroupParameters = z.infer<typeof updateProxyGroupParameters>;
+type AddRuleParameters = z.infer<typeof addRuleParameters>;
+type RemoveRuleParameters = z.infer<typeof removeRuleParameters>;
+type UpdateDnsParameters = z.infer<typeof updateDnsParameters>;
+type SetModeParameters = z.infer<typeof setModeParameters>;
+
+type ConfigToolParams =
+  | AddProxyParameters
+  | RemoveProxyParameters
+  | AddProxyGroupParameters
+  | UpdateProxyGroupParameters
+  | AddRuleParameters
+  | RemoveRuleParameters
+  | UpdateDnsParameters
+  | SetModeParameters;
+
+type ConfigToolResult<TAction extends string, TParams extends ConfigToolParams> =
+  | PendingConfirmationResult<TAction, TParams>
+  | ValidationErrorResult;
+
+function finalizeValidatedChange<
+  TAction extends string,
+  TParams extends ConfigToolParams,
+>(
+  action: TAction,
+  params: TParams,
+  validation: ValidationResult,
+): ConfigToolResult<TAction, TParams> {
+  if (!validation.valid) {
+    return createValidationErrorResult(validation);
+  }
+
+  return pendingConfirmation(action, params);
+}
+
+function buildProxyFragment(params: AddProxyParameters): Record<string, unknown> {
+  return {
+    name: params.name,
+    type: params.type,
+    server: params.server,
+    port: params.port,
+    ...(params.settings ?? {}),
+  };
+}
+
+function validateRuleParameters(params: AddRuleParameters): ValidationResult {
+  if (params.type !== "MATCH" && params.value === undefined) {
+    return {
+      valid: false,
+      errors: [
+        {
+          path: "value",
+          message: `规则类型 ${params.type} 需要提供 value`,
+        },
+      ],
+      warnings: [],
+    };
+  }
+
+  const rule =
+    params.type === "MATCH"
+      ? `MATCH,${params.policy}`
+      : `${params.type},${params.value},${params.policy}`;
+
+  return validateRuleFragment(rule);
+}
+
+function buildDnsFragment(params: UpdateDnsParameters): Record<string, unknown> {
+  const dns: Record<string, unknown> = {};
+
+  if (params.nameserver !== undefined) {
+    dns.nameserver = params.nameserver;
+  }
+
+  if (params.fallback !== undefined) {
+    dns.fallback = params.fallback;
+  }
+
+  if (params.fakeIpFilter !== undefined) {
+    dns["fake-ip-filter"] = params.fakeIpFilter;
+  }
+
+  if (params.enhancedMode !== undefined) {
+    dns["enhanced-mode"] = params.enhancedMode;
+  }
+
+  return dns;
+}
+
 export const configTools = {
   get_current_config: tool({
     description: "获取当前 Mihomo 运行时配置快照",
@@ -117,7 +224,12 @@ export const configTools = {
   add_proxy: tool({
     description: "添加代理节点到 Mihomo 配置，返回待确认操作",
     inputSchema: addProxyParameters,
-    execute: async (params) => pendingConfirmation("add_proxy", params),
+    execute: async (params) =>
+      finalizeValidatedChange(
+        "add_proxy",
+        params,
+        validateProxyFragment(buildProxyFragment(params)),
+      ),
   }),
 
   remove_proxy: tool({
@@ -129,19 +241,30 @@ export const configTools = {
   add_proxy_group: tool({
     description: "添加代理组到 Mihomo 配置，返回待确认操作",
     inputSchema: addProxyGroupParameters,
-    execute: async (params) => pendingConfirmation("add_proxy_group", params),
+    execute: async (params) =>
+      finalizeValidatedChange(
+        "add_proxy_group",
+        params,
+        validateProxyGroupFragment(params),
+      ),
   }),
 
   update_proxy_group: tool({
     description: "更新代理组配置，返回待确认操作",
     inputSchema: updateProxyGroupParameters,
-    execute: async (params) => pendingConfirmation("update_proxy_group", params),
+    execute: async (params) =>
+      finalizeValidatedChange(
+        "update_proxy_group",
+        params,
+        validateProxyGroupUpdateFragment(params.updates),
+      ),
   }),
 
   add_rule: tool({
     description: "添加路由规则，返回待确认操作",
     inputSchema: addRuleParameters,
-    execute: async (params) => pendingConfirmation("add_rule", params),
+    execute: async (params) =>
+      finalizeValidatedChange("add_rule", params, validateRuleParameters(params)),
   }),
 
   remove_rule: tool({
@@ -153,12 +276,18 @@ export const configTools = {
   update_dns: tool({
     description: "更新 DNS 配置，返回待确认操作",
     inputSchema: updateDnsParameters,
-    execute: async (params) => pendingConfirmation("update_dns", params),
+    execute: async (params) =>
+      finalizeValidatedChange(
+        "update_dns",
+        params,
+        validateDnsFragment(buildDnsFragment(params)),
+      ),
   }),
 
   set_mode: tool({
     description: "切换 Mihomo 运行模式，返回待确认操作",
     inputSchema: setModeParameters,
-    execute: async (params) => pendingConfirmation("set_mode", params),
+    execute: async (params) =>
+      finalizeValidatedChange("set_mode", params, validateModeFragment(params.mode)),
   }),
 };

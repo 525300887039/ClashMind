@@ -28,41 +28,44 @@ export const FEW_SHOT_EXAMPLES: ModelMessage[] = [
         toolCallId: "few-shot-add-group-config",
         toolName: "get_current_config",
         output: {
-          source: "mihomo_runtime",
-          sanitized: true,
-          config: {
-            "mixed-port": 7890,
-            proxies: [
-              {
-                name: "香港-01",
-                type: "ss",
-                server: "<redacted>",
-                port: 443,
-                password: "<redacted>",
-              },
-              {
-                name: "香港-02",
-                type: "trojan",
-                server: "<redacted>",
-                port: 443,
-                password: "<redacted>",
-              },
-              {
-                name: "日本-01",
-                type: "vmess",
-                server: "<redacted>",
-                port: 443,
-                uuid: "<redacted>",
-              },
-            ],
-            "proxy-groups": [
-              {
-                name: "节点选择",
-                type: "select",
-                proxies: ["香港-01", "香港-02", "日本-01"],
-              },
-            ],
-            rules: ["MATCH,节点选择"],
+          type: "json",
+          value: {
+            source: "mihomo_runtime",
+            sanitized: true,
+            config: {
+              "mixed-port": 7890,
+              proxies: [
+                {
+                  name: "香港-01",
+                  type: "ss",
+                  server: "<redacted>",
+                  port: 443,
+                  password: "<redacted>",
+                },
+                {
+                  name: "香港-02",
+                  type: "trojan",
+                  server: "<redacted>",
+                  port: 443,
+                  password: "<redacted>",
+                },
+                {
+                  name: "日本-01",
+                  type: "vmess",
+                  server: "<redacted>",
+                  port: 443,
+                  uuid: "<redacted>",
+                },
+              ],
+              "proxy-groups": [
+                {
+                  name: "节点选择",
+                  type: "select",
+                  proxies: ["香港-01", "香港-02", "日本-01"],
+                },
+              ],
+              rules: ["MATCH,节点选择"],
+            },
           },
         },
       },
@@ -97,15 +100,18 @@ export const FEW_SHOT_EXAMPLES: ModelMessage[] = [
         toolCallId: "few-shot-add-group-action",
         toolName: "add_proxy_group",
         output: {
-          action: "add_proxy_group",
-          params: {
-            name: "香港自动",
-            type: "url-test",
-            filter: "港|HK",
-            url: "http://www.gstatic.com/generate_204",
-            interval: 300,
+          type: "json",
+          value: {
+            action: "add_proxy_group",
+            params: {
+              name: "香港自动",
+              type: "url-test",
+              filter: "港|HK",
+              url: "http://www.gstatic.com/generate_204",
+              interval: 300,
+            },
+            status: "pending_confirmation",
           },
-          status: "pending_confirmation",
         },
       },
     ],
@@ -147,14 +153,17 @@ export const FEW_SHOT_EXAMPLES: ModelMessage[] = [
         toolCallId: "few-shot-add-rule",
         toolName: "add_rule",
         output: {
-          action: "add_rule",
-          params: {
-            type: "DOMAIN-SUFFIX",
-            value: "openai.com",
-            policy: "节点选择",
-            position: "prepend",
+          type: "json",
+          value: {
+            action: "add_rule",
+            params: {
+              type: "DOMAIN-SUFFIX",
+              value: "openai.com",
+              policy: "节点选择",
+              position: "prepend",
+            },
+            status: "pending_confirmation",
           },
-          status: "pending_confirmation",
         },
       },
     ],
@@ -193,13 +202,16 @@ export const FEW_SHOT_EXAMPLES: ModelMessage[] = [
         toolCallId: "few-shot-stats-summary",
         toolName: "get_traffic_summary",
         output: {
-          days: 7,
-          summary: {
-            totalConnections: 1286,
-            totalUpload: 234881024,
-            totalDownload: 3221225472,
-            activeConnections: 18,
-            uniqueDomains: 146,
+          type: "json",
+          value: {
+            days: 7,
+            summary: {
+              totalConnections: 1286,
+              totalUpload: 234881024,
+              totalDownload: 3221225472,
+              activeConnections: 18,
+              uniqueDomains: 146,
+            },
           },
         },
       },
@@ -231,28 +243,31 @@ export const FEW_SHOT_EXAMPLES: ModelMessage[] = [
         toolCallId: "few-shot-stats-top-domains",
         toolName: "get_top_domains",
         output: {
-          days: 7,
-          limit: 5,
-          domains: [
-            {
-              domain: "video.example.com",
-              hitCount: 412,
-              upload: 157286400,
-              download: 2147483648,
-            },
-            {
-              domain: "cdn.example.net",
-              hitCount: 275,
-              upload: 52428800,
-              download: 805306368,
-            },
-            {
-              domain: "openai.com",
-              hitCount: 96,
-              upload: 24117248,
-              download: 268435456,
-            },
-          ],
+          type: "json",
+          value: {
+            days: 7,
+            limit: 5,
+            domains: [
+              {
+                domain: "video.example.com",
+                hitCount: 412,
+                upload: 157286400,
+                download: 2147483648,
+              },
+              {
+                domain: "cdn.example.net",
+                hitCount: 275,
+                upload: 52428800,
+                download: 805306368,
+              },
+              {
+                domain: "openai.com",
+                hitCount: 96,
+                upload: 24117248,
+                download: 268435456,
+              },
+            ],
+          },
         },
       },
     ],
@@ -289,26 +304,29 @@ export const FEW_SHOT_EXAMPLES: ModelMessage[] = [
         toolCallId: "few-shot-diagnosis-connectivity",
         toolName: "check_connectivity",
         output: {
-          reachable: true,
-          apiAddress: "127.0.0.1:9090",
-          collectorRunning: true,
-          activeConnections: 18,
-          proxyCount: 24,
-          selectedGroups: [
-            {
-              group: "节点选择",
-              current: "香港-02",
+          type: "json",
+          value: {
+            reachable: true,
+            apiAddress: "127.0.0.1:9090",
+            collectorRunning: true,
+            activeConnections: 18,
+            proxyCount: 24,
+            selectedGroups: [
+              {
+                group: "节点选择",
+                current: "香港-02",
+              },
+              {
+                group: "流媒体",
+                current: "日本-01",
+              },
+            ],
+            version: {
+              version: "1.19.0",
+              meta: "mihomo",
             },
-            {
-              group: "流媒体",
-              current: "日本-01",
-            },
-          ],
-          version: {
-            version: "1.19.0",
-            meta: "mihomo",
+            issues: ["节点选择 当前节点延迟波动较大"],
           },
-          issues: ["节点选择 当前节点延迟波动较大"],
         },
       },
     ],
@@ -338,20 +356,23 @@ export const FEW_SHOT_EXAMPLES: ModelMessage[] = [
         toolCallId: "few-shot-diagnosis-errors",
         toolName: "get_recent_errors",
         output: {
-          windowMinutes: 30,
-          issues: [
-            {
-              source: "mihomo_api",
-              severity: "warning",
-              message: "节点选择 当前节点香港-02 最近延迟波动明显",
-            },
-            {
-              source: "runtime",
-              severity: "error",
-              message: "日本-01 最近出现拨号超时，可能影响部分分组切换",
-            },
-          ],
-          note: "当前版本没有独立的持久化错误日志；此结果基于即时运行时健康检查生成。",
+          type: "json",
+          value: {
+            windowMinutes: 30,
+            issues: [
+              {
+                source: "mihomo_api",
+                severity: "warning",
+                message: "节点选择 当前节点香港-02 最近延迟波动明显",
+              },
+              {
+                source: "runtime",
+                severity: "error",
+                message: "日本-01 最近出现拨号超时，可能影响部分分组切换",
+              },
+            ],
+            note: "当前版本没有独立的持久化错误日志；此结果基于即时运行时健康检查生成。",
+          },
         },
       },
     ],

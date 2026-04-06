@@ -1,6 +1,7 @@
 import { useState, useEffect, lazy, Suspense } from "react";
 import { Save, RotateCw } from "lucide-react";
 import { toast, Toaster } from "sonner";
+import { api } from "@/lib/tauri-api";
 import { useAppStore } from "@/stores/app-store";
 import { useReadConfig, useWriteConfig, useReloadConfig } from "./hooks/use-config";
 
@@ -18,6 +19,7 @@ export function ConfigPage() {
 
   const [content, setContent] = useState("");
   const [dirty, setDirty] = useState(false);
+  const [isSnapshotting, setIsSnapshotting] = useState(false);
 
   useEffect(() => {
     if (savedContent !== undefined) {
@@ -32,13 +34,17 @@ export function ConfigPage() {
   };
 
   const handleSave = async () => {
+    setIsSnapshotting(true);
     try {
+      await api.ai.createSnapshot("手动保存前自动备份", configPath);
       await writeMut.mutateAsync({ path: configPath, content });
       await reloadMut.mutateAsync();
       setDirty(false);
       toast.success("配置已保存并重载");
     } catch (err) {
       toast.error(`保存失败: ${err}`);
+    } finally {
+      setIsSnapshotting(false);
     }
   };
 
@@ -54,7 +60,7 @@ export function ConfigPage() {
     );
   }
 
-  const saving = writeMut.isPending || reloadMut.isPending;
+  const saving = isSnapshotting || writeMut.isPending || reloadMut.isPending;
 
   return (
     <div className="flex h-full flex-col">

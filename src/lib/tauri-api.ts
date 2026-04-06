@@ -120,12 +120,125 @@ export interface AiPingResponse {
   timestamp: number;
 }
 
+export interface ConfigSnapshot {
+  id: number;
+  content: string;
+  source: "manual" | "ai";
+  description: string | null;
+  filePath: string | null;
+  createdAt: string;
+}
+
+export interface SaveConversationMessageParams {
+  role: AiChatRole;
+  content: string;
+  toolCalls?: unknown;
+  tokensUsed?: number;
+  model?: string;
+}
+
+export interface ConfigApplyPayload {
+  originalConfig: string;
+  modifiedConfig: string;
+}
+
+export type ConfigChangeAction =
+  | "add_proxy"
+  | "remove_proxy"
+  | "add_proxy_group"
+  | "update_proxy_group"
+  | "add_rule"
+  | "remove_rule"
+  | "update_dns"
+  | "set_mode";
+
+const CONFIG_CHANGE_ACTIONS: ConfigChangeAction[] = [
+  "add_proxy",
+  "remove_proxy",
+  "add_proxy_group",
+  "update_proxy_group",
+  "add_rule",
+  "remove_rule",
+  "update_dns",
+  "set_mode",
+];
+
+export interface DiffChange {
+  type: "add" | "remove" | "modify";
+  path: string;
+  description: string;
+}
+
+export interface ConfigDiff {
+  original: string;
+  modified: string;
+  unifiedDiff: string;
+  summary: string;
+  changes: DiffChange[];
+}
+
+export interface PendingConfigChangeResult {
+  action: ConfigChangeAction;
+  params: Record<string, unknown>;
+  status: "pending_confirmation";
+  diff: ConfigDiff;
+  confirmationBatchId: string;
+  confirmationBatchSize: number;
+  isLatestInBatch: boolean;
+}
+
 export type AiStreamEvent =
   | { type: "text_delta"; content: string }
   | { type: "tool_call"; name: string; id: string; input: Record<string, unknown> }
   | { type: "tool_result"; id: string; content: unknown }
   | { type: "error"; message: string }
   | { type: "done"; tokensUsed?: number };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isConfigChangeAction(value: unknown): value is ConfigChangeAction {
+  return typeof value === "string" && CONFIG_CHANGE_ACTIONS.includes(value as ConfigChangeAction);
+}
+
+function isDiffChange(value: unknown): value is DiffChange {
+  return (
+    isRecord(value) &&
+    (value.type === "add" || value.type === "remove" || value.type === "modify") &&
+    typeof value.path === "string" &&
+    typeof value.description === "string"
+  );
+}
+
+function isConfigDiff(value: unknown): value is ConfigDiff {
+  return (
+    isRecord(value) &&
+    typeof value.original === "string" &&
+    typeof value.modified === "string" &&
+    typeof value.unifiedDiff === "string" &&
+    typeof value.summary === "string" &&
+    Array.isArray(value.changes) &&
+    value.changes.every(isDiffChange)
+  );
+}
+
+export function isPendingConfigChangeResult(
+  value: unknown,
+): value is PendingConfigChangeResult {
+  return (
+    isRecord(value) &&
+    value.status === "pending_confirmation" &&
+    isConfigChangeAction(value.action) &&
+    isRecord(value.params) &&
+    isConfigDiff(value.diff) &&
+    typeof value.confirmationBatchId === "string" &&
+    typeof value.confirmationBatchSize === "number" &&
+    Number.isInteger(value.confirmationBatchSize) &&
+    value.confirmationBatchSize > 0 &&
+    typeof value.isLatestInBatch === "boolean"
+  );
+}
 
 export const api = {
   mihomo: {
@@ -142,6 +255,19 @@ export const api = {
     status: () => invoke<boolean>("get_ai_status"),
     chat: (params: AiChatParams) => invoke("ai_chat", { params }),
     ping: () => invoke<AiPingResponse>("ai_ping"),
+    listSnapshots: (limit: number) =>
+      invoke<ConfigSnapshot[]>("list_snapshots", { limit }),
+    restoreSnapshot: (id: number) => invoke<void>("restore_snapshot", { id }),
+    createSnapshot: (description?: string, filePath?: string) =>
+      invoke<number>("create_snapshot", { description, filePath }),
+    saveConversationMessage: (params: SaveConversationMessageParams) =>
+      invoke<number>("save_conversation_message", { params }),
+    applyConfigChange: (payload: ConfigApplyPayload) =>
+      invoke("apply_config_change", {
+        originalConfig: payload.originalConfig,
+        modifiedConfig: payload.modifiedConfig,
+      }),
+    rejectConfigChange: () => invoke("reject_config_change"),
   },
   proxy: {
     getAll: () => invoke<ProxiesResponse>("get_proxies"),

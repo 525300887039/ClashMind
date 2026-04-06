@@ -7,6 +7,9 @@ import {
   type AiChatParams,
   type AiProviderSettings,
   type AiStreamEvent,
+  type ConfigApplyPayload,
+  type SaveConversationMessageParams,
+  isPendingConfigChangeResult,
 } from "@/lib/tauri-api";
 import { useAppStore } from "@/stores/app-store";
 import { useAiStore, type AiMessage } from "@/stores/ai-store";
@@ -35,6 +38,11 @@ function buildConversation(messages: AiMessage[], nextUserInput: string): AiChat
 
 function providerRequiresApiKey(provider: AiProviderSettings["provider"]) {
   return provider !== "ollama";
+}
+
+function getPersistenceModel() {
+  const model = useAppStore.getState().aiModel.trim();
+  return model.length > 0 ? model : undefined;
 }
 
 function getChatSettings() {
@@ -78,7 +86,56 @@ function getChatSettings() {
   };
 }
 
-function handleStreamEvent(event: AiStreamEvent) {
+async function persistConversationMessage(params: SaveConversationMessageParams) {
+  await api.ai.saveConversationMessage(params);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isConfigApplyPayload(value: unknown): value is ConfigApplyPayload {
+  return (
+    isRecord(value) &&
+    typeof value.originalConfig === "string" &&
+    typeof value.modifiedConfig === "string"
+  );
+}
+
+function extractPendingConfigToolResult(value: unknown): {
+  result: unknown;
+  applyPayload: ConfigApplyPayload | null;
+  confirmationBatchId: string | null;
+} {
+  if (!isPendingConfigChangeResult(value)) {
+    return {
+      result: value,
+      applyPayload: null,
+      confirmationBatchId: null,
+    };
+  }
+
+  const confirmationBatchId =
+    typeof value.confirmationBatchId === "string" ? value.confirmationBatchId : null;
+  const applyPayload =
+    isRecord(value) && isConfigApplyPayload(value.applyPayload) ? value.applyPayload : null;
+
+  return {
+    result: {
+      action: value.action,
+      params: value.params,
+      status: value.status,
+      diff: value.diff,
+      confirmationBatchId: value.confirmationBatchId,
+      confirmationBatchSize: value.confirmationBatchSize,
+      isLatestInBatch: value.isLatestInBatch,
+    },
+    applyPayload,
+    confirmationBatchId,
+  };
+}
+
+async function handleStreamEvent(event: AiStreamEvent) {
   const store = useAiStore.getState();
   const activeMessageId = store.activeStreamMessageId;
 
@@ -102,17 +159,52 @@ function handleStreamEvent(event: AiStreamEvent) {
     }
     case "tool_result": {
       if (activeMessageId !== null) {
-        store.setToolCallResult(activeMessageId, event.id, event.content);
+        const extractedResult = extractPendingConfigToolResult(event.content);
+
+        if (
+          extractedResult.confirmationBatchId !== null &&
+          extractedResult.applyPayload !== null
+        ) {
+          store.setConfigApplyPayload(
+            extractedResult.confirmationBatchId,
+            extractedResult.applyPayload,
+          );
+        }
+
+        store.setToolCallResult(activeMessageId, event.id, extractedResult.result);
       }
       return;
     }
     case "done": {
+      const assistantMessage =
+        activeMessageId !== null
+          ? store.messages.find((message) => message.id === activeMessageId) ?? null
+          : null;
+
       if (activeMessageId !== null) {
         store.finalizeStream(activeMessageId);
         store.setActiveStreamMessageId(null);
       }
       store.setLoading(false);
       store.setError(null);
+
+      if (assistantMessage !== null) {
+        try {
+          await persistConversationMessage({
+            role: assistantMessage.role,
+            content: assistantMessage.content,
+            toolCalls:
+              assistantMessage.toolCalls.length > 0 ? assistantMessage.toolCalls : undefined,
+            tokensUsed: event.tokensUsed,
+            model: getPersistenceModel(),
+          });
+        } catch (error) {
+          useAiStore
+            .getState()
+            .setError(`保存对话历史失败: ${normalizeError(error).message}`);
+        }
+      }
+
       return;
     }
     case "error": {
@@ -136,7 +228,7 @@ function ensureAiStreamListener() {
 
   if (registry[AI_STREAM_LISTENER_KEY] === undefined) {
     registry[AI_STREAM_LISTENER_KEY] = listen<AiStreamEvent>("ai-stream", (event) => {
-      handleStreamEvent(event.payload);
+      void handleStreamEvent(event.payload);
     }).catch((error: unknown) => {
       delete registry[AI_STREAM_LISTENER_KEY];
       throw normalizeError(error);
@@ -203,6 +295,13 @@ export function useAiChat() {
         await ensureAiStreamListener();
         await ensureAiServiceRunning();
         await api.ai.chat(params);
+        void persistConversationMessage({
+          role: "user",
+          content,
+          model: settingsResult.settings.model,
+        }).catch((error: unknown) => {
+          console.warn("[ClashMind] 保存用户对话历史失败:", normalizeError(error));
+        });
       } catch (error) {
         store.removeMessage(userMessageId);
         store.removeMessage(assistantMessageId);
