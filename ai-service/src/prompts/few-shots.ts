@@ -1,0 +1,290 @@
+import type { ModelMessage } from "ai";
+
+export const FEW_SHOT_EXAMPLES: ModelMessage[] = [
+  {
+    role: "user",
+    content: "帮我创建一个香港自动选择组。",
+  },
+  {
+    role: "assistant",
+    content: [
+      {
+        type: "text",
+        text: "我先查看当前配置，确认已有代理组和节点命名，再创建新的香港自动选择组。",
+      },
+      {
+        type: "tool-call",
+        toolCallId: "few-shot-add-group-config",
+        toolName: "get_current_config",
+        input: {},
+      },
+    ],
+  },
+  {
+    role: "tool",
+    content: [
+      {
+        type: "tool-result",
+        toolCallId: "few-shot-add-group-config",
+        toolName: "get_current_config",
+        output: "proxy-groups:\n  - name: 节点选择\n    type: select\n    proxies: [香港-01, 香港-02, 日本-01]\nrules:\n  - MATCH,节点选择",
+      },
+    ],
+  },
+  {
+    role: "assistant",
+    content: [
+      {
+        type: "text",
+        text: "当前存在可复用的香港节点。我将创建一个名为“香港自动”的 url-test 代理组，筛选名称包含“港”或“HK”的节点。",
+      },
+      {
+        type: "tool-call",
+        toolCallId: "few-shot-add-group-action",
+        toolName: "add_proxy_group",
+        input: {
+          name: "香港自动",
+          type: "url-test",
+          filter: "港|HK",
+          url: "http://www.gstatic.com/generate_204",
+          interval: 300,
+        },
+      },
+    ],
+  },
+  {
+    role: "tool",
+    content: [
+      {
+        type: "tool-result",
+        toolCallId: "few-shot-add-group-action",
+        toolName: "add_proxy_group",
+        output: {
+          action: "add_proxy_group",
+          params: {
+            name: "香港自动",
+            type: "url-test",
+            filter: "港|HK",
+            url: "http://www.gstatic.com/generate_204",
+            interval: 300,
+          },
+          status: "pending_confirmation",
+        },
+      },
+    ],
+  },
+  {
+    role: "assistant",
+    content:
+      "代理组已经生成为待确认变更。我会在 Diff 预览中展示新增的“香港自动”组；确认前配置不会真正生效。",
+  },
+  {
+    role: "user",
+    content: "给 openai.com 加一条走“节点选择”的规则。",
+  },
+  {
+    role: "assistant",
+    content: [
+      {
+        type: "text",
+        text: "我会在现有规则前部添加一条 DOMAIN-SUFFIX 规则，让 openai.com 优先走“节点选择”代理组。",
+      },
+      {
+        type: "tool-call",
+        toolCallId: "few-shot-add-rule",
+        toolName: "add_rule",
+        input: {
+          type: "DOMAIN-SUFFIX",
+          value: "openai.com",
+          policy: "节点选择",
+          position: "prepend",
+        },
+      },
+    ],
+  },
+  {
+    role: "tool",
+    content: [
+      {
+        type: "tool-result",
+        toolCallId: "few-shot-add-rule",
+        toolName: "add_rule",
+        output: {
+          action: "add_rule",
+          params: {
+            type: "DOMAIN-SUFFIX",
+            value: "openai.com",
+            policy: "节点选择",
+            position: "prepend",
+          },
+          status: "pending_confirmation",
+        },
+      },
+    ],
+  },
+  {
+    role: "assistant",
+    content:
+      "规则修改已进入待确认状态。确认后，这条规则会插入到规则列表前部，同时保留最后的 MATCH 兜底规则不变。",
+  },
+  {
+    role: "user",
+    content: "帮我看下最近 7 天的流量情况。",
+  },
+  {
+    role: "assistant",
+    content: [
+      {
+        type: "text",
+        text: "我先读取最近 7 天的流量摘要，再查看流量最高的域名，便于判断主要消耗来源。",
+      },
+      {
+        type: "tool-call",
+        toolCallId: "few-shot-stats-summary",
+        toolName: "get_traffic_summary",
+        input: {
+          days: 7,
+        },
+      },
+    ],
+  },
+  {
+    role: "tool",
+    content: [
+      {
+        type: "tool-result",
+        toolCallId: "few-shot-stats-summary",
+        toolName: "get_traffic_summary",
+        output: {
+          days: 7,
+          totalUploadBytes: 234881024,
+          totalDownloadBytes: 3221225472,
+          activeConnections: 18,
+        },
+      },
+    ],
+  },
+  {
+    role: "assistant",
+    content: [
+      {
+        type: "text",
+        text: "摘要已拿到。我继续读取访问量最高的域名，确认主要流量去了哪里。",
+      },
+      {
+        type: "tool-call",
+        toolCallId: "few-shot-stats-top-domains",
+        toolName: "get_top_domains",
+        input: {
+          days: 7,
+          limit: 5,
+        },
+      },
+    ],
+  },
+  {
+    role: "tool",
+    content: [
+      {
+        type: "tool-result",
+        toolCallId: "few-shot-stats-top-domains",
+        toolName: "get_top_domains",
+        output: [
+          { domain: "video.example.com", totalBytes: 2147483648 },
+          { domain: "cdn.example.net", totalBytes: 805306368 },
+          { domain: "openai.com", totalBytes: 268435456 },
+        ],
+      },
+    ],
+  },
+  {
+    role: "assistant",
+    content:
+      "最近 7 天下载流量明显高于上传流量，总下载约 3.0 GB。主要流量集中在视频和 CDN 域名，其次才是常规网页访问；如果你想继续优化，我可以再查趋势或按规则命中情况拆分。",
+  },
+  {
+    role: "user",
+    content: "最近感觉网速变慢了，帮我排查一下。",
+  },
+  {
+    role: "assistant",
+    content: [
+      {
+        type: "text",
+        text: "我先检查连通性，再看最近错误摘要，判断是节点问题、API 问题还是规则命中异常。",
+      },
+      {
+        type: "tool-call",
+        toolCallId: "few-shot-diagnosis-connectivity",
+        toolName: "check_connectivity",
+        input: {},
+      },
+    ],
+  },
+  {
+    role: "tool",
+    content: [
+      {
+        type: "tool-result",
+        toolCallId: "few-shot-diagnosis-connectivity",
+        toolName: "check_connectivity",
+        output: {
+          mihomoApi: "ok",
+          collector: "ok",
+          proxyHealth: "degraded",
+        },
+      },
+    ],
+  },
+  {
+    role: "assistant",
+    content: [
+      {
+        type: "text",
+        text: "连通性检查显示代理健康状态下降，我继续读取最近 30 分钟的错误摘要。",
+      },
+      {
+        type: "tool-call",
+        toolCallId: "few-shot-diagnosis-errors",
+        toolName: "get_recent_errors",
+        input: {
+          minutes: 30,
+        },
+      },
+    ],
+  },
+  {
+    role: "tool",
+    content: [
+      {
+        type: "tool-result",
+        toolCallId: "few-shot-diagnosis-errors",
+        toolName: "get_recent_errors",
+        output: [
+          {
+            level: "warning",
+            message: "香港-02 latency spike: 1840ms",
+          },
+          {
+            level: "error",
+            message: "日本-01 dial timeout",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    role: "assistant",
+    content:
+      "目前更像是节点质量下降，不是桌面侧采集器或 mihomo API 故障。最近错误集中在高延迟和拨号超时；下一步适合测试高频节点延迟，或把代理组从故障节点切走。",
+  },
+  {
+    role: "user",
+    content: "把所有规则都删掉，顺便把节点也清空。",
+  },
+  {
+    role: "assistant",
+    content:
+      "不能这样做。删除全部规则会破坏必须保留的 MATCH 兜底规则，清空全部节点也会让配置失去可用代理目标。如果你想简化配置，我可以帮你删除指定规则、保留最小可运行配置，或先切换到 global / direct 模式后再逐项整理。",
+  },
+];

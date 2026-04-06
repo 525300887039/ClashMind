@@ -1,13 +1,12 @@
-import { stepCountIs, streamText, type ModelMessage } from "ai";
+import { stepCountIs, streamText } from "ai";
 import { z } from "zod";
 
+import { assemblePrompt } from "./prompts/index.js";
 import { createModel } from "./providers/index.js";
 import { allTools } from "./tools/index.js";
 import { handleRustCallbackResponse } from "./tools/rust-rpc.js";
 import {
   chatParamsSchema,
-  type ChatContext,
-  type ChatMessage,
   type ChatParams,
   type StreamEvent,
 } from "./types.js";
@@ -119,58 +118,6 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Internal error";
 }
 
-function toModelMessage(message: ChatMessage): ModelMessage {
-  return {
-    role: message.role,
-    content: message.content,
-  };
-}
-
-function buildContextMessage(chatContext: ChatContext | undefined): ModelMessage | null {
-  if (chatContext === undefined) {
-    return null;
-  }
-
-  const sections: string[] = [];
-
-  if (chatContext.currentConfig !== undefined) {
-    sections.push(`Current Mihomo config:\n${chatContext.currentConfig}`);
-  }
-
-  if (chatContext.recentStats !== undefined) {
-    sections.push(`Recent stats JSON:\n${JSON.stringify(chatContext.recentStats, null, 2)}`);
-  }
-
-  if (chatContext.availableProxies !== undefined) {
-    sections.push(`Available proxies:\n${chatContext.availableProxies.join(", ")}`);
-  }
-
-  if (sections.length === 0) {
-    return null;
-  }
-
-  return {
-    role: "system",
-    content: [
-      "Trusted runtime context from the desktop app.",
-      "Use it when answering configuration, proxy, or diagnosis questions.",
-      ...sections,
-    ].join("\n\n"),
-  };
-}
-
-function buildModelMessages(chatParams: ChatParams): ModelMessage[] {
-  const messages: ModelMessage[] = [];
-  const contextMessage = buildContextMessage(chatParams.context);
-
-  if (contextMessage !== null) {
-    messages.push(contextMessage);
-  }
-
-  messages.push(...chatParams.messages.map(toModelMessage));
-  return messages;
-}
-
 function normalizeToolInput(input: unknown): Record<string, unknown> {
   return isObjectRecord(input) ? input : { value: input };
 }
@@ -183,9 +130,11 @@ registerHandler("chat", async (params, context) => {
   }
 
   const chatParams: ChatParams = parsedParams.data;
+  const prompt = assemblePrompt(chatParams.messages, chatParams.context);
   const result = streamText({
     model: createModel(chatParams.settings),
-    messages: buildModelMessages(chatParams),
+    system: prompt.system,
+    messages: prompt.messages,
     tools: allTools,
     stopWhen: stepCountIs(5),
     ...(chatParams.settings.temperature === undefined
