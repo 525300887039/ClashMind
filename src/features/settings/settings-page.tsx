@@ -1,23 +1,18 @@
 import { useState } from "react";
-import { Save, RotateCw } from "lucide-react";
+import { motion } from "framer-motion";
+import { RotateCw, Save, Settings2, Waypoints } from "lucide-react";
 import { toast, Toaster } from "sonner";
-import { useAppStore, type Theme } from "@/stores/app-store";
-import type { AiProviderKind } from "@/lib/tauri-api";
+import { AiSettingsPanel } from "@/features/ai/ai-settings";
 import { api } from "@/lib/tauri-api";
 import { cn } from "@/lib/utils";
+import { useAppStore, type Theme } from "@/stores/app-store";
 
 export function SettingsPage() {
   const store = useAppStore();
-
   const [mihomoConfigDir, setMihomoConfigDir] = useState(store.mihomoConfigDir);
   const [apiAddress, setApiAddress] = useState(store.apiAddress);
   const [apiSecret, setApiSecret] = useState(store.apiSecret);
   const [httpPort, setHttpPort] = useState(store.httpPort);
-  const [aiProvider, setAiProvider] = useState<AiProviderKind>(store.aiProvider);
-  const [aiModel, setAiModel] = useState(store.aiModel);
-  const [aiApiKey, setAiApiKey] = useState(store.aiApiKey);
-  const [aiBaseUrl, setAiBaseUrl] = useState(store.aiBaseUrl);
-  const [aiTemperature, setAiTemperature] = useState(store.aiTemperature);
   const [theme, setTheme] = useState<Theme>(store.theme);
   const [saving, setSaving] = useState(false);
 
@@ -32,167 +27,164 @@ export function SettingsPage() {
         apiAddress,
         apiSecret,
         httpPort,
-        aiProvider,
-        aiModel,
-        aiApiKey,
-        aiBaseUrl,
-        aiTemperature,
       });
       store.setTheme(theme);
 
       if (apiAddress !== prevAddress || apiSecret !== prevSecret) {
-        await api.system.updateMihomoClient(
-          `http://${apiAddress}`,
-          apiSecret,
-        );
+        await api.system.updateMihomoClient(`http://${apiAddress}`, apiSecret);
       }
 
-      toast.success("设置已保存");
-    } catch (err) {
-      toast.error(`保存失败: ${err}`);
+      toast.success("系统设置已保存");
+    } catch (error) {
+      toast.error(`保存系统设置失败: ${String(error)}`);
     } finally {
       setSaving(false);
     }
   };
 
-  const inputClass =
-    "rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary w-64";
-  const selectClass = cn(inputClass, "appearance-auto");
-
   return (
-    <div className="flex h-full flex-col">
+    <motion.section
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.24, ease: "easeOut" }}
+      className="flex h-[calc(100vh-5rem)] flex-col gap-4"
+    >
       <Toaster position="top-center" richColors />
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="mx-auto max-w-2xl space-y-0 divide-y divide-border">
-          <Row label="Mihomo 配置目录">
-            <input
-              type="text"
-              className={inputClass}
-              value={mihomoConfigDir}
-              onChange={(e) => setMihomoConfigDir(e.target.value)}
-            />
-          </Row>
 
-          <Row label="API 地址">
-            <input
-              type="text"
-              className={inputClass}
-              value={apiAddress}
-              onChange={(e) => setApiAddress(e.target.value)}
-              placeholder="127.0.0.1:9090"
-            />
-          </Row>
+      <header className="relative overflow-hidden rounded-[2rem] border border-border/70 bg-linear-to-br from-primary/14 via-background to-background p-6 shadow-[0_28px_100px_-50px_rgba(15,23,42,0.65)]">
+        <div className="pointer-events-none absolute -right-10 top-0 size-40 rounded-full bg-primary/12 blur-3xl" />
+        <div className="pointer-events-none absolute bottom-0 left-0 h-24 w-56 bg-linear-to-r from-primary/10 to-transparent" />
 
-          <Row label="API 密钥">
-            <input
-              type="password"
-              className={inputClass}
-              value={apiSecret}
-              onChange={(e) => setApiSecret(e.target.value)}
-            />
-          </Row>
+        <div className="relative flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div className="max-w-3xl">
+            <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/10 px-3 py-1 text-xs font-medium tracking-[0.18em] text-primary uppercase">
+              <Settings2 className="size-3.5" />
+              Control Surface
+            </div>
+            <h1 className="mt-4 text-3xl font-semibold tracking-tight text-foreground">
+              设置
+            </h1>
+            <p className="mt-2 text-sm leading-7 text-muted-foreground">
+              上半区维护 Mihomo 本地控制面的连接参数，下半区集中管理 AI Provider、
+              模型与 sidecar 服务状态。AI 设置会独立持久化到应用数据目录。
+            </p>
+          </div>
 
-          <Row label="HTTP 代理端口">
-            <input
-              type="number"
-              className={inputClass}
-              value={httpPort}
-              onChange={(e) => setHttpPort(Number(e.target.value))}
-            />
-          </Row>
-
-          <Row label="主题">
-            <select
-              className={selectClass}
-              value={theme}
-              onChange={(e) => setTheme(e.target.value as Theme)}
-            >
-              <option value="system">跟随系统</option>
-              <option value="light">浅色</option>
-              <option value="dark">深色</option>
-            </select>
-          </Row>
-
-          <SectionLabel label="AI 助手" />
-
-          <Row label="AI Provider">
-            <select
-              className={selectClass}
-              value={aiProvider}
-              onChange={(e) => setAiProvider(e.target.value as AiProviderKind)}
-            >
-              <option value="openai">OpenAI</option>
-              <option value="claude">Claude</option>
-              <option value="deepseek">DeepSeek</option>
-              <option value="ollama">Ollama</option>
-            </select>
-          </Row>
-
-          <Row label="AI 模型">
-            <input
-              type="text"
-              className={inputClass}
-              value={aiModel}
-              onChange={(e) => setAiModel(e.target.value)}
-              placeholder={aiProvider === "ollama" ? "qwen3:latest" : "gpt-4o-mini"}
-            />
-          </Row>
-
-          {aiProvider !== "ollama" ? (
-            <Row label="AI API Key">
-              <input
-                type="password"
-                className={inputClass}
-                value={aiApiKey}
-                onChange={(e) => setAiApiKey(e.target.value)}
-                placeholder="输入 API Key"
-              />
-            </Row>
-          ) : null}
-
-          <Row label="AI Base URL">
-            <input
-              type="text"
-              className={inputClass}
-              value={aiBaseUrl}
-              onChange={(e) => setAiBaseUrl(e.target.value)}
-              placeholder={aiProvider === "ollama" ? "http://localhost:11434/api" : "留空使用默认"}
-            />
-          </Row>
-
-          <Row label="AI 温度">
-            <input
-              type="number"
-              min={0}
-              max={1}
-              step={0.1}
-              className={inputClass}
-              value={aiTemperature}
-              onChange={(e) => setAiTemperature(Number(e.target.value))}
-            />
-          </Row>
-        </div>
-
-        <div className="mx-auto mt-6 max-w-2xl">
           <button
+            type="button"
             onClick={handleSave}
             disabled={saving}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+            className={cn(
+              "inline-flex items-center justify-center gap-2 rounded-full border px-4 py-2.5 text-sm font-medium transition-all",
+              "border-primary/20 bg-primary text-primary-foreground shadow-[0_18px_42px_-24px_var(--color-primary)] hover:translate-y-[-1px] hover:bg-primary/92",
+              "disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0",
+            )}
           >
             {saving ? (
-              <RotateCw size={14} className="animate-spin" />
+              <RotateCw className="size-4 animate-spin" />
             ) : (
-              <Save size={14} />
+              <Save className="size-4" />
             )}
-            {saving ? "保存中..." : "保存"}
+            {saving ? "保存中" : "保存系统设置"}
           </button>
         </div>
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="space-y-4">
+          <section className="relative overflow-hidden rounded-[2rem] border border-border/70 bg-background/95 p-6 shadow-[0_28px_100px_-52px_rgba(15,23,42,0.55)]">
+            <div className="pointer-events-none absolute -right-8 top-0 size-28 rounded-full bg-primary/10 blur-3xl" />
+
+            <div className="relative">
+              <div className="flex flex-col gap-4 border-b border-border/70 pb-5 xl:flex-row xl:items-end xl:justify-between">
+                <div className="max-w-2xl">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/10 px-3 py-1 text-xs font-medium tracking-[0.18em] text-primary uppercase">
+                    <Waypoints className="size-3.5" />
+                    Mihomo Control Plane
+                  </div>
+                  <h2 className="mt-4 text-2xl font-semibold tracking-tight text-foreground">
+                    系统设置
+                  </h2>
+                  <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                    这些参数决定 ClashMind 如何定位配置目录、连接 Mihomo 控制面并应用代理端口。
+                  </p>
+                </div>
+                <div className="rounded-full border border-border/70 bg-background/75 px-3 py-2 text-xs font-medium tracking-[0.18em] text-muted-foreground uppercase">
+                  Theme / API / Paths
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                <FieldShell label="Mihomo 配置目录">
+                  <input
+                    type="text"
+                    value={mihomoConfigDir}
+                    onChange={(event) => setMihomoConfigDir(event.target.value)}
+                    className={inputClassName()}
+                  />
+                </FieldShell>
+
+                <FieldShell label="控制面地址">
+                  <input
+                    type="text"
+                    value={apiAddress}
+                    onChange={(event) => setApiAddress(event.target.value)}
+                    className={inputClassName()}
+                    placeholder="127.0.0.1:9090"
+                  />
+                </FieldShell>
+
+                <FieldShell label="控制面密钥">
+                  <input
+                    type="password"
+                    value={apiSecret}
+                    onChange={(event) => setApiSecret(event.target.value)}
+                    className={inputClassName()}
+                    placeholder="可留空"
+                  />
+                </FieldShell>
+
+                <FieldShell label="HTTP 代理端口">
+                  <input
+                    type="number"
+                    value={httpPort}
+                    onChange={(event) => setHttpPort(Number(event.target.value))}
+                    className={inputClassName()}
+                    min={1}
+                    step={1}
+                  />
+                </FieldShell>
+
+                <FieldShell label="主题">
+                  <select
+                    value={theme}
+                    onChange={(event) => setTheme(event.target.value as Theme)}
+                    className={cn(inputClassName(), "appearance-auto")}
+                  >
+                    <option value="system">跟随系统</option>
+                    <option value="light">浅色</option>
+                    <option value="dark">深色</option>
+                  </select>
+                </FieldShell>
+              </div>
+            </div>
+          </section>
+
+          <AiSettingsPanel />
+        </div>
       </div>
-    </div>
+    </motion.section>
   );
 }
 
-function Row({
+function inputClassName() {
+  return cn(
+    "h-12 w-full rounded-[1.1rem] border border-border/70 bg-background/80 px-4 text-sm text-foreground outline-none transition-colors",
+    "placeholder:text-muted-foreground/70 hover:border-primary/20 focus-visible:border-primary/30",
+  );
+}
+
+function FieldShell({
   label,
   children,
 }: {
@@ -200,19 +192,11 @@ function Row({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between py-4">
-      <span className="text-sm font-medium">{label}</span>
-      {children}
-    </div>
-  );
-}
-
-function SectionLabel({ label }: { label: string }) {
-  return (
-    <div className="pt-6">
-      <span className="text-xs font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+    <label className="rounded-[1.45rem] border border-border/70 bg-background/68 p-4">
+      <div className="text-[11px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
         {label}
-      </span>
-    </div>
+      </div>
+      <div className="mt-3">{children}</div>
+    </label>
   );
 }
