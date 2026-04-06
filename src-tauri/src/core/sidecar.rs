@@ -14,6 +14,8 @@ use tauri_plugin_shell::ShellExt;
 use thiserror::Error;
 use tokio::sync::oneshot;
 
+use super::ai_callback::{self, AiCallbackRequest};
+
 const AI_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const AI_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -151,7 +153,9 @@ fn fail_pending_requests(
 ) {
     match pending.lock() {
         Ok(mut pending_requests) => {
-            for pending_request in pending_requests.drain().map(|(_, pending_request)| pending_request)
+            for pending_request in pending_requests
+                .drain()
+                .map(|(_, pending_request)| pending_request)
             {
                 match pending_request {
                     PendingRpcRequest::Unary(sender) => {
@@ -205,8 +209,65 @@ fn parse_rpc_error(payload: &serde_json::Value) -> AiSidecarError {
     AiSidecarError::Rpc { code, message }
 }
 
-fn handle_ai_stdout(
+fn write_ai_stdin(
+    runtime: &Arc<Mutex<Option<AiSidecarRuntime>>>,
+    payload: &serde_json::Value,
+) -> Result<(), AiSidecarError> {
+    let line = format!(
+        "{}\n",
+        serde_json::to_string(payload)
+            .map_err(|error| AiSidecarError::InvalidResponse(error.to_string()))?
+    );
+
+    let mut runtime_guard = runtime
+        .lock()
+        .map_err(|error| AiSidecarError::WriteFailed(error.to_string()))?;
+    let active_runtime = runtime_guard.as_mut().ok_or(AiSidecarError::NotRunning)?;
+
+    active_runtime
+        .child
+        .write(line.as_bytes())
+        .map_err(|error| AiSidecarError::WriteFailed(error.to_string()))
+}
+
+async fn respond_to_callback(
     app: &AppHandle,
+    runtime: &Arc<Mutex<Option<AiSidecarRuntime>>>,
+    request_id: String,
+    request: AiCallbackRequest,
+) {
+    if request.callback_id != request_id {
+        tracing::warn!(
+            "[ai-service] callback id mismatch: request_id={}, callback_id={}",
+            request_id,
+            request.callback_id
+        );
+    }
+
+    let response = match ai_callback::handle_callback(app, request).await {
+        Ok(result) => serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": result,
+        }),
+        Err(error) => serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {
+                "code": -32000,
+                "message": error.to_string(),
+            },
+        }),
+    };
+
+    if let Err(error) = write_ai_stdin(runtime, &response) {
+        tracing::error!("[ai-service] failed to write callback response: {error}");
+    }
+}
+
+async fn handle_ai_stdout(
+    app: &AppHandle,
+    runtime: &Arc<Mutex<Option<AiSidecarRuntime>>>,
     pending: &PendingRpcRequests,
     ready_sender: &mut Option<oneshot::Sender<Result<(), AiSidecarError>>>,
     line: Vec<u8>,
@@ -230,6 +291,46 @@ fn handle_ai_stdout(
         tracing::info!("[ai-service] ready");
         if let Some(sender) = ready_sender.take() {
             let _ = sender.send(Ok(()));
+        }
+        return;
+    }
+
+    if payload
+        .get("method")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|method| method == "callback")
+    {
+        let request_id = extract_response_id(&payload);
+        let callback_params = payload
+            .get("params")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+
+        match (
+            request_id,
+            serde_json::from_value::<AiCallbackRequest>(callback_params),
+        ) {
+            (Some(request_id), Ok(request)) => {
+                respond_to_callback(app, runtime, request_id, request).await;
+            }
+            (Some(request_id), Err(error)) => {
+                let response = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32602,
+                        "message": format!("无效的 callback 请求: {error}"),
+                    },
+                });
+                if let Err(write_error) = write_ai_stdin(runtime, &response) {
+                    tracing::error!(
+                        "[ai-service] failed to write invalid-callback response: {write_error}"
+                    );
+                }
+            }
+            (None, _) => {
+                tracing::warn!("[ai-service] callback request missing id");
+            }
         }
         return;
     }
@@ -336,7 +437,14 @@ pub async fn start_ai(app: &AppHandle, state: &AiSidecarState) -> Result<(), AiS
             while let Some(event) = rx.recv().await {
                 match event {
                     CommandEvent::Stdout(line) => {
-                        handle_ai_stdout(&app_handle, &pending_reader, &mut ready_sender, line);
+                        handle_ai_stdout(
+                            &app_handle,
+                            &runtime_state,
+                            &pending_reader,
+                            &mut ready_sender,
+                            line,
+                        )
+                        .await;
                     }
                     CommandEvent::Stderr(line) => {
                         tracing::warn!(

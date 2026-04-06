@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline";
 
-import { handleRpcRequest } from "./rpc-handler.js";
+import { handleRpcMessage } from "./rpc-handler.js";
 
 const SERVICE_VERSION = "0.1.0";
 
@@ -40,7 +40,7 @@ rl.on("line", async (line: string) => {
   }
 
   try {
-    const response = await handleRpcRequest(request);
+    const response = await handleRpcMessage(request);
     if (response !== null) {
       writeMessage(response);
     }

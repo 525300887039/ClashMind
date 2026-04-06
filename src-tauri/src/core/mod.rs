@@ -1,3 +1,4 @@
+pub mod ai_callback;
 pub mod logs;
 pub mod mihomo;
 pub mod sidecar;

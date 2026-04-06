@@ -1,0 +1,440 @@
+use chrono::{Duration as ChronoDuration, Utc};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use tauri::{AppHandle, Manager};
+
+use crate::{
+    cmd::{self, stats::RuleStat, MihomoState},
+    collector::{CollectorState, RealtimeStore},
+    core::sidecar::AiSidecarError,
+    utils::time,
+};
+
+const DEFAULT_DELAY_TEST_URL: &str = "http://www.gstatic.com/generate_204";
+const DEFAULT_DELAY_TEST_TIMEOUT_MS: u32 = 5_000;
+const DEFAULT_RULE_STATS_LIMIT: i32 = 20;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCallbackRequest {
+    pub callback_id: String,
+    pub method: String,
+    #[serde(default)]
+    pub params: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum TrafficGranularity {
+    Hourly,
+    Daily,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DaysOnlyParams {
+    days: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TopDomainsParams {
+    days: Option<i32>,
+    limit: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DelayParams {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TrafficTrendParams {
+    granularity: TrafficGranularity,
+    days: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecentErrorsParams {
+    minutes: Option<i32>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SelectedProxyGroup {
+    group: String,
+    current: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConnectivitySummary {
+    reachable: bool,
+    api_address: String,
+    collector_running: bool,
+    active_connections: usize,
+    proxy_count: usize,
+    selected_groups: Vec<SelectedProxyGroup>,
+    version: Option<serde_json::Value>,
+    issues: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeIssue {
+    source: String,
+    severity: String,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecentErrorsSummary {
+    window_minutes: i32,
+    issues: Vec<RuntimeIssue>,
+    note: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuleMatchStatsSummary {
+    days: i32,
+    total_hits: i64,
+    match_hits: i64,
+    match_rate: f64,
+    rules: Vec<RuleStat>,
+}
+
+fn invalid_callback(message: impl Into<String>) -> AiSidecarError {
+    AiSidecarError::InvalidResponse(message.into())
+}
+
+fn parse_params<T>(params: serde_json::Value) -> Result<T, AiSidecarError>
+where
+    T: DeserializeOwned,
+{
+    let normalized_params = if params.is_null() {
+        serde_json::json!({})
+    } else {
+        params
+    };
+
+    serde_json::from_value(normalized_params)
+        .map_err(|error| invalid_callback(format!("callback 参数无效: {error}")))
+}
+
+fn bounded_i32(
+    value: Option<i32>,
+    default_value: i32,
+    min_value: i32,
+    max_value: i32,
+    label: &str,
+) -> Result<i32, AiSidecarError> {
+    let resolved = value.unwrap_or(default_value);
+    if (min_value..=max_value).contains(&resolved) {
+        Ok(resolved)
+    } else {
+        Err(invalid_callback(format!(
+            "{label} 超出范围，期望 {min_value}..={max_value}，收到 {resolved}"
+        )))
+    }
+}
+
+fn extract_proxy_count(proxies: &serde_json::Value) -> usize {
+    proxies
+        .get("proxies")
+        .and_then(serde_json::Value::as_object)
+        .map(|items| items.len())
+        .unwrap_or(0)
+}
+
+fn extract_selected_groups(proxies: &serde_json::Value) -> Vec<SelectedProxyGroup> {
+    let Some(proxy_items) = proxies
+        .get("proxies")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Vec::new();
+    };
+
+    let mut groups = proxy_items
+        .iter()
+        .filter_map(|(group_name, value)| {
+            let current = value.get("now")?.as_str()?.trim();
+            if current.is_empty() {
+                return None;
+            }
+
+            Some(SelectedProxyGroup {
+                group: group_name.clone(),
+                current: current.to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    groups.sort_by(|left, right| left.group.cmp(&right.group));
+    groups
+}
+
+fn build_traffic_window(granularity: &TrafficGranularity, days: i32) -> (String, String) {
+    let now = Utc::now();
+    let days = i64::from(days);
+
+    match granularity {
+        TrafficGranularity::Hourly => {
+            let end = time::next_hour_boundary(&now);
+            let start = end - ChronoDuration::days(days);
+            (time::format_utc(start), time::format_utc(end))
+        }
+        TrafficGranularity::Daily => {
+            let end = time::next_day_boundary(&now);
+            let start = end - ChronoDuration::days(days);
+            (time::format_utc(start), time::format_utc(end))
+        }
+    }
+}
+
+async fn with_mihomo_client<F, T>(app: &AppHandle, callback: F) -> Result<T, AiSidecarError>
+where
+    F: for<'a> FnOnce(
+        &'a crate::core::mihomo::MihomoClient,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<T, crate::core::mihomo::MihomoError>>
+                + Send
+                + 'a,
+        >,
+    >,
+{
+    let mihomo_state = app.state::<MihomoState>();
+    let client = mihomo_state.client.lock().await;
+    callback(&client)
+        .await
+        .map_err(|error| invalid_callback(error.to_string()))
+}
+
+pub async fn handle_callback(
+    app: &AppHandle,
+    request: AiCallbackRequest,
+) -> Result<serde_json::Value, AiSidecarError> {
+    match request.method.as_str() {
+        "get_config" => {
+            let config = with_mihomo_client(app, |client| Box::pin(client.get_configs())).await?;
+            Ok(serde_json::json!({
+                "source": "mihomo_runtime",
+                "config": config,
+            }))
+        }
+        "get_proxies" => with_mihomo_client(app, |client| Box::pin(client.get_proxies())).await,
+        "test_delay" => {
+            let params = parse_params::<DelayParams>(request.params)?;
+            let proxy_name = params.name.clone();
+            let delay = with_mihomo_client(app, move |client| {
+                Box::pin(async move {
+                    client
+                        .test_delay(
+                            &proxy_name,
+                            DEFAULT_DELAY_TEST_URL,
+                            DEFAULT_DELAY_TEST_TIMEOUT_MS,
+                        )
+                        .await
+                })
+            })
+            .await?;
+
+            Ok(serde_json::json!({
+                "name": params.name,
+                "url": DEFAULT_DELAY_TEST_URL,
+                "timeout": DEFAULT_DELAY_TEST_TIMEOUT_MS,
+                "delay": delay,
+            }))
+        }
+        "get_stats_overview" => {
+            let params = parse_params::<DaysOnlyParams>(request.params)?;
+            let days = bounded_i32(params.days, 7, 1, 365, "days")?;
+            let summary = cmd::stats::get_stats_overview(app.clone(), days)
+                .await
+                .map_err(|error| invalid_callback(error.to_string()))?;
+
+            Ok(serde_json::json!({
+                "days": days,
+                "summary": summary,
+            }))
+        }
+        "get_domain_stats" => {
+            let params = parse_params::<TopDomainsParams>(request.params)?;
+            let days = bounded_i32(params.days, 7, 1, 365, "days")?;
+            let limit = bounded_i32(params.limit, 20, 1, 100, "limit")?;
+            let domains = cmd::stats::get_domain_stats(app.clone(), days, limit)
+                .await
+                .map_err(|error| invalid_callback(error.to_string()))?;
+
+            Ok(serde_json::json!({
+                "days": days,
+                "limit": limit,
+                "domains": domains,
+            }))
+        }
+        "get_traffic_trend" => {
+            let params = parse_params::<TrafficTrendParams>(request.params)?;
+            let days = bounded_i32(params.days, 7, 1, 365, "days")?;
+            let (start, end) = build_traffic_window(&params.granularity, days);
+            let granularity = match params.granularity {
+                TrafficGranularity::Hourly => "hourly",
+                TrafficGranularity::Daily => "daily",
+            };
+
+            let points = match params.granularity {
+                TrafficGranularity::Hourly => {
+                    cmd::stats::get_traffic_hourly(app.clone(), start.clone(), end.clone()).await
+                }
+                TrafficGranularity::Daily => {
+                    cmd::stats::get_traffic_daily(app.clone(), start.clone(), end.clone()).await
+                }
+            }
+            .map_err(|error| invalid_callback(error.to_string()))?;
+
+            Ok(serde_json::json!({
+                "granularity": granularity,
+                "days": days,
+                "start": start,
+                "end": end,
+                "points": points,
+            }))
+        }
+        "check_connectivity" => {
+            let api_address = {
+                let mihomo_state = app.state::<MihomoState>();
+                let client = mihomo_state.client.lock().await;
+                client.connection_info().0
+            };
+
+            let version_result =
+                with_mihomo_client(app, |client| Box::pin(client.get_version())).await;
+            let proxies_result =
+                with_mihomo_client(app, |client| Box::pin(client.get_proxies())).await;
+
+            let collector_running = app.state::<CollectorState>().is_running();
+            let active_connections = app
+                .state::<RealtimeStore>()
+                .get_summary()
+                .await
+                .active_count;
+            let mut issues = Vec::new();
+
+            if let Err(error) = &version_result {
+                issues.push(format!("mihomo version API 不可用: {error}"));
+            }
+
+            if let Err(error) = &proxies_result {
+                issues.push(format!("mihomo proxies API 不可用: {error}"));
+            }
+
+            if !collector_running {
+                issues.push("连接采集器当前未运行".to_string());
+            }
+
+            let proxy_count = proxies_result
+                .as_ref()
+                .map(extract_proxy_count)
+                .unwrap_or_default();
+            let selected_groups = proxies_result
+                .as_ref()
+                .map(extract_selected_groups)
+                .unwrap_or_default();
+
+            Ok(serde_json::to_value(ConnectivitySummary {
+                reachable: version_result.is_ok() && proxies_result.is_ok(),
+                api_address,
+                collector_running,
+                active_connections,
+                proxy_count,
+                selected_groups,
+                version: version_result.ok(),
+                issues,
+            })
+            .map_err(|error| invalid_callback(error.to_string()))?)
+        }
+        "get_recent_errors" => {
+            let params = parse_params::<RecentErrorsParams>(request.params)?;
+            let minutes = bounded_i32(params.minutes, 30, 1, 1_440, "minutes")?;
+            let api_address = {
+                let mihomo_state = app.state::<MihomoState>();
+                let client = mihomo_state.client.lock().await;
+                client.connection_info().0
+            };
+            let collector_running = app.state::<CollectorState>().is_running();
+            let active_connections = app
+                .state::<RealtimeStore>()
+                .get_summary()
+                .await
+                .active_count;
+            let mut issues = Vec::new();
+
+            match with_mihomo_client(app, |client| Box::pin(client.get_version())).await {
+                Ok(_) => {}
+                Err(error) => issues.push(RuntimeIssue {
+                    source: "mihomo_api".to_string(),
+                    severity: "error".to_string(),
+                    message: format!("{api_address} 连通性检查失败: {error}"),
+                }),
+            }
+
+            if !collector_running {
+                issues.push(RuntimeIssue {
+                    source: "collector".to_string(),
+                    severity: "warning".to_string(),
+                    message: "连接采集器未运行，最近统计可能不完整".to_string(),
+                });
+            }
+
+            if active_connections == 0 {
+                issues.push(RuntimeIssue {
+                    source: "runtime".to_string(),
+                    severity: "info".to_string(),
+                    message: "当前没有活跃连接，近期错误摘要可能为空".to_string(),
+                });
+            }
+
+            Ok(serde_json::to_value(RecentErrorsSummary {
+                window_minutes: minutes,
+                issues,
+                note: "当前版本没有独立的持久化错误日志；此结果基于即时运行时健康检查生成。"
+                    .to_string(),
+            })
+            .map_err(|error| invalid_callback(error.to_string()))?)
+        }
+        "get_rule_stats" => {
+            let params = parse_params::<DaysOnlyParams>(request.params)?;
+            let days = bounded_i32(params.days, 1, 1, 30, "days")?;
+            let rules = cmd::stats::get_rule_stats(app.clone(), days, DEFAULT_RULE_STATS_LIMIT)
+                .await
+                .map_err(|error| invalid_callback(error.to_string()))?;
+            let total_hits = rules.iter().map(|rule| rule.hit_count).sum::<i64>();
+            let match_hits = rules
+                .iter()
+                .find(|rule| rule.rule == "MATCH")
+                .map(|rule| rule.hit_count)
+                .unwrap_or(0);
+            let match_rate = if total_hits == 0 {
+                0.0
+            } else {
+                match_hits as f64 / total_hits as f64
+            };
+
+            Ok(serde_json::to_value(RuleMatchStatsSummary {
+                days,
+                total_hits,
+                match_hits,
+                match_rate,
+                rules,
+            })
+            .map_err(|error| invalid_callback(error.to_string()))?)
+        }
+        other_method => Err(invalid_callback(format!(
+            "未知 callback 方法: {other_method}; callbackId={}",
+            request.callback_id
+        ))),
+    }
+}

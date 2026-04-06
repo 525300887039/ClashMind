@@ -1,7 +1,9 @@
-import { streamText, type ModelMessage } from "ai";
+import { stepCountIs, streamText, type ModelMessage } from "ai";
 import { z } from "zod";
 
 import { createModel } from "./providers/index.js";
+import { allTools } from "./tools/index.js";
+import { handleRustCallbackResponse } from "./tools/rust-rpc.js";
 import {
   chatParamsSchema,
   type ChatContext,
@@ -184,6 +186,8 @@ registerHandler("chat", async (params, context) => {
   const result = streamText({
     model: createModel(chatParams.settings),
     messages: buildModelMessages(chatParams),
+    tools: allTools,
+    stopWhen: stepCountIs(5),
     ...(chatParams.settings.temperature === undefined
       ? {}
       : { temperature: chatParams.settings.temperature }),
@@ -247,6 +251,14 @@ registerHandler("chat", async (params, context) => {
 
 export function registerHandler(method: string, handler: JsonRpcHandler): void {
   handlers.set(method, handler);
+}
+
+export async function handleRpcMessage(message: unknown): Promise<JsonRpcResponse | null> {
+  if (handleRustCallbackResponse(message)) {
+    return null;
+  }
+
+  return handleRpcRequest(message);
 }
 
 export async function handleRpcRequest(request: unknown): Promise<JsonRpcResponse | null> {
