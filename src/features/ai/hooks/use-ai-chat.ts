@@ -5,12 +5,12 @@ import {
   api,
   type AiChatMessage,
   type AiChatParams,
-  type AiProviderSettings,
   type AiStreamEvent,
   type ConfigApplyPayload,
   type SaveConversationMessageParams,
   isPendingConfigChangeResult,
 } from "@/lib/tauri-api";
+import { ensureAiServiceRunning, resolveAiSettings } from "../ai-settings";
 import { useAppStore } from "@/stores/app-store";
 import { useAiStore, type AiMessage } from "@/stores/ai-store";
 
@@ -36,54 +36,9 @@ function buildConversation(messages: AiMessage[], nextUserInput: string): AiChat
   ];
 }
 
-function providerRequiresApiKey(provider: AiProviderSettings["provider"]) {
-  return provider !== "ollama";
-}
-
 function getPersistenceModel() {
   const model = useAppStore.getState().aiModel.trim();
   return model.length > 0 ? model : undefined;
-}
-
-function getChatSettings() {
-  const {
-    aiProvider,
-    aiModel,
-    aiApiKey,
-    aiBaseUrl,
-    aiTemperature,
-  } = useAppStore.getState();
-
-  const model = aiModel.trim();
-  const apiKey = aiApiKey.trim();
-  const baseUrl = aiBaseUrl.trim();
-
-  if (!model) {
-    return {
-      ok: false as const,
-      message: "请先在设置页配置 AI 模型。",
-    };
-  }
-
-  if (providerRequiresApiKey(aiProvider) && !apiKey) {
-    return {
-      ok: false as const,
-      message: "请先在设置页配置 AI Provider 和 API Key。",
-    };
-  }
-
-  const settings: AiProviderSettings = {
-    provider: aiProvider,
-    model,
-    temperature: Number.isFinite(aiTemperature) ? aiTemperature : 0.3,
-    ...(apiKey ? { apiKey } : {}),
-    ...(baseUrl ? { baseUrl } : {}),
-  };
-
-  return {
-    ok: true as const,
-    settings,
-  };
 }
 
 async function persistConversationMessage(params: SaveConversationMessageParams) {
@@ -238,13 +193,6 @@ function ensureAiStreamListener() {
   return registry[AI_STREAM_LISTENER_KEY];
 }
 
-async function ensureAiServiceRunning() {
-  const isRunning = await api.ai.status();
-  if (!isRunning) {
-    await api.ai.start();
-  }
-}
-
 export function useAiChat() {
   const messages = useAiStore((state) => state.messages);
   const isLoading = useAiStore((state) => state.isLoading);
@@ -266,7 +214,7 @@ export function useAiChat() {
 
       const store = useAiStore.getState();
       const conversation = buildConversation(store.messages, content);
-      const settingsResult = getChatSettings();
+      const settingsResult = resolveAiSettings();
 
       if (!settingsResult.ok) {
         const settingsError = new Error(settingsResult.message);

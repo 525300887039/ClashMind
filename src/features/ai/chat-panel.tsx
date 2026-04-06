@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { Bot, Settings2, Sparkles, Trash2, Wrench } from "lucide-react";
 import { Toaster } from "sonner";
+import { ReportViewer } from "./report-viewer";
 import { ChatInput } from "./chat-input";
 import { ChatMessage } from "./chat-message";
 import { useAiChat } from "./hooks/use-ai-chat";
@@ -11,19 +12,19 @@ import { cn } from "@/lib/utils";
 
 const CAPABILITY_CARDS = [
   {
-    title: "流式回复",
-    description: "边生成边展示结果，适合诊断和规则推演。",
+    title: "流式对话",
+    description: "边生成边展示结果，适合诊断、追因和规则推演。",
     icon: Sparkles,
   },
   {
-    title: "工具调用",
-    description: "将模型动作拆成可检查、可折叠的调用轨迹。",
-    icon: Wrench,
+    title: "报告解读",
+    description: "日报与周报使用 Markdown 呈现，方便保存和复盘。",
+    icon: Bot,
   },
   {
-    title: "配置协助",
-    description: "围绕 mihomo 配置、代理策略和统计洞察组织对话。",
-    icon: Bot,
+    title: "可审计动作",
+    description: "工具调用轨迹和配置预览保持可展开、可确认。",
+    icon: Wrench,
   },
 ] as const;
 
@@ -79,7 +80,7 @@ export function ChatPanel() {
               AI 助手
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-              让对话、工具调用和配置协作在同一个工作面板里展开。当前发送链路已接入流式事件与工具执行轨迹，适合先做诊断、再落配置变更。
+              让对话、统计报告和配置协作在同一个工作面板里展开。左侧处理流式会话与工具轨迹，右侧固定为 AI 统计报告工作台，适合先读信号、再落动作。
             </p>
           </div>
 
@@ -115,7 +116,7 @@ export function ChatPanel() {
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
+      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1.06fr)_minmax(24rem,0.94fr)]">
         <div className="flex min-h-0 flex-col overflow-hidden rounded-[2rem] border border-border/70 bg-background/95 shadow-[0_28px_100px_-52px_rgba(15,23,42,0.55)]">
           <div className="flex items-center justify-between border-b border-border/70 px-5 py-4">
             <div>
@@ -192,27 +193,33 @@ export function ChatPanel() {
           </div>
         </div>
 
-        <aside className="flex min-h-0 flex-col gap-3">
-          {CAPABILITY_CARDS.map(({ title, description, icon: Icon }, index) => (
-            <motion.article
-              key={title}
-              initial={{ opacity: 0, x: 18 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.08 * index, duration: 0.24, ease: "easeOut" }}
-              className="relative overflow-hidden rounded-[1.75rem] border border-border/70 bg-linear-to-br from-background to-muted/20 p-5 shadow-[0_24px_90px_-50px_rgba(15,23,42,0.45)]"
-            >
-              <div className="pointer-events-none absolute -right-8 top-0 size-24 rounded-full bg-primary/10 blur-3xl" />
-              <div className="relative">
-                <div className="inline-flex size-10 items-center justify-center rounded-[1rem] bg-primary/10 text-primary">
-                  <Icon className="size-5" />
-                </div>
-                <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
-              </div>
-            </motion.article>
-          ))}
+        <aside className="min-h-0 overflow-y-auto pr-1">
+          <div className="flex flex-col gap-4">
+            <ReportViewer />
 
-          <SnapshotList />
+            <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-1">
+              {CAPABILITY_CARDS.map(({ title, description, icon: Icon }, index) => (
+                <motion.article
+                  key={title}
+                  initial={{ opacity: 0, x: 18 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.08 * index, duration: 0.24, ease: "easeOut" }}
+                  className="relative overflow-hidden rounded-[1.75rem] border border-border/70 bg-linear-to-br from-background to-muted/20 p-5 shadow-[0_24px_90px_-50px_rgba(15,23,42,0.45)]"
+                >
+                  <div className="pointer-events-none absolute -right-8 top-0 size-24 rounded-full bg-primary/10 blur-3xl" />
+                  <div className="relative">
+                    <div className="inline-flex size-10 items-center justify-center rounded-[1rem] bg-primary/10 text-primary">
+                      <Icon className="size-5" />
+                    </div>
+                    <h3 className="mt-4 text-base font-semibold text-foreground">{title}</h3>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
+                  </div>
+                </motion.article>
+              ))}
+            </div>
+
+            <SnapshotList />
+          </div>
         </aside>
       </div>
     </motion.section>
