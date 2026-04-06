@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAppStore } from "@/stores/app-store";
 import { api } from "@/lib/tauri-api";
+import { getAiSettingsSnapshot } from "@/features/ai/hooks/use-ai-settings";
 
 type InitStatus = "checking" | "needs-setup" | "starting" | "ready" | "error";
 
@@ -18,6 +19,26 @@ export function useAppInit() {
     }
   };
 
+  const startAiQuietly = async () => {
+    try {
+      const settings = await getAiSettingsSnapshot();
+      if (!settings.autoStart) {
+        return;
+      }
+
+      await api.ai.start();
+      console.log("[ClashMind] AI sidecar 启动成功");
+    } catch (err) {
+      const message = String(err);
+      if (message.includes("已在运行")) {
+        console.log("[ClashMind] AI sidecar 已在运行");
+        return;
+      }
+
+      console.warn("[ClashMind] AI sidecar 自动启动失败:", err);
+    }
+  };
+
   const initialize = async () => {
     try {
       setStatus("checking");
@@ -32,12 +53,14 @@ export function useAppInit() {
       await api.mihomo.start(configDir);
       setStatus("ready");
       startCollectorQuietly();
+      void startAiQuietly();
     } catch (err) {
       // If sidecar is already running, that's fine
       const msg = String(err);
       if (msg.includes("已在运行")) {
         setStatus("ready");
         startCollectorQuietly();
+        void startAiQuietly();
       } else {
         setError(msg);
         setStatus("error");
@@ -52,11 +75,13 @@ export function useAppInit() {
       await api.mihomo.start(configDir);
       setStatus("ready");
       startCollectorQuietly();
+      void startAiQuietly();
     } catch (err) {
       const msg = String(err);
       if (msg.includes("已在运行")) {
         setStatus("ready");
         startCollectorQuietly();
+        void startAiQuietly();
       } else {
         setError(msg);
         setStatus("error");
