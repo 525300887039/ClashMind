@@ -192,7 +192,7 @@ function toPathString(path: Array<string | number>): string {
     return "";
   }
 
-  return path.reduce((result, segment) => {
+  return path.reduce<string>((result, segment) => {
     if (typeof segment === "number") {
       return `${result}[${segment}]`;
     }
