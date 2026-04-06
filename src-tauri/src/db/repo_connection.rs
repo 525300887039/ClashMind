@@ -30,6 +30,12 @@ pub(crate) struct RuleStatRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RuleHitSummary {
+    pub total_hits: i64,
+    pub match_hits: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GeoIpTrafficRow {
     pub dst_ip: String,
     pub conn_count: i64,
@@ -295,6 +301,36 @@ LIMIT ?;
     }
 
     Ok(rules)
+}
+
+pub(crate) async fn summarize_rule_hits(db: &DbPool, days: i32) -> Result<RuleHitSummary, DbError> {
+    let pool = sqlite_pool(db)?;
+    let row = sqlx::query(
+        r#"
+SELECT
+    COALESCE(SUM(hit_count), 0) AS total_hits,
+    COALESCE(
+        SUM(
+            CASE
+                WHEN COALESCE(NULLIF(TRIM(rule), ''), 'UNKNOWN') = 'MATCH' THEN hit_count
+                ELSE 0
+            END
+        ),
+        0
+    ) AS match_hits
+FROM rule_stats
+WHERE date(day) >= date('now', '-' || ? || ' days');
+"#,
+    )
+    .bind(i64::from(days.max(0)))
+    .fetch_one(pool)
+    .await
+    .map_err(|error| DbError::QueryFailed(format!("查询规则命中汇总失败: {error}")))?;
+
+    Ok(RuleHitSummary {
+        total_hits: try_col!(row, "total_hits", "规则命中汇总"),
+        match_hits: try_col!(row, "match_hits", "规则命中汇总"),
+    })
 }
 
 pub(crate) async fn query_geo_traffic_by_ip(

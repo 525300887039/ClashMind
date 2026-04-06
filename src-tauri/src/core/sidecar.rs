@@ -231,8 +231,8 @@ fn write_ai_stdin(
 }
 
 async fn respond_to_callback(
-    app: &AppHandle,
-    runtime: &Arc<Mutex<Option<AiSidecarRuntime>>>,
+    app: AppHandle,
+    runtime: Arc<Mutex<Option<AiSidecarRuntime>>>,
     request_id: String,
     request: AiCallbackRequest,
 ) {
@@ -244,7 +244,7 @@ async fn respond_to_callback(
         );
     }
 
-    let response = match ai_callback::handle_callback(app, request).await {
+    let response = match ai_callback::handle_callback(&app, request).await {
         Ok(result) => serde_json::json!({
             "jsonrpc": "2.0",
             "id": request_id,
@@ -260,12 +260,12 @@ async fn respond_to_callback(
         }),
     };
 
-    if let Err(error) = write_ai_stdin(runtime, &response) {
+    if let Err(error) = write_ai_stdin(&runtime, &response) {
         tracing::error!("[ai-service] failed to write callback response: {error}");
     }
 }
 
-async fn handle_ai_stdout(
+fn handle_ai_stdout(
     app: &AppHandle,
     runtime: &Arc<Mutex<Option<AiSidecarRuntime>>>,
     pending: &PendingRpcRequests,
@@ -311,7 +311,11 @@ async fn handle_ai_stdout(
             serde_json::from_value::<AiCallbackRequest>(callback_params),
         ) {
             (Some(request_id), Ok(request)) => {
-                respond_to_callback(app, runtime, request_id, request).await;
+                let app_handle = app.clone();
+                let runtime_state = Arc::clone(runtime);
+                tauri::async_runtime::spawn(async move {
+                    respond_to_callback(app_handle, runtime_state, request_id, request).await;
+                });
             }
             (Some(request_id), Err(error)) => {
                 let response = serde_json::json!({
@@ -319,7 +323,7 @@ async fn handle_ai_stdout(
                     "id": request_id,
                     "error": {
                         "code": -32602,
-                        "message": format!("无效的 callback 请求: {error}"),
+                    "message": format!("无效的 callback 请求: {error}"),
                     },
                 });
                 if let Err(write_error) = write_ai_stdin(runtime, &response) {
@@ -443,8 +447,7 @@ pub async fn start_ai(app: &AppHandle, state: &AiSidecarState) -> Result<(), AiS
                             &pending_reader,
                             &mut ready_sender,
                             line,
-                        )
-                        .await;
+                        );
                     }
                     CommandEvent::Stderr(line) => {
                         tracing::warn!(

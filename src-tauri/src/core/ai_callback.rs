@@ -6,12 +6,14 @@ use crate::{
     cmd::{self, stats::RuleStat, MihomoState},
     collector::{CollectorState, RealtimeStore},
     core::sidecar::AiSidecarError,
+    db::{self, repo_connection},
     utils::time,
 };
 
 const DEFAULT_DELAY_TEST_URL: &str = "http://www.gstatic.com/generate_204";
 const DEFAULT_DELAY_TEST_TIMEOUT_MS: u32 = 5_000;
 const DEFAULT_RULE_STATS_LIMIT: i32 = 20;
+const REDACTED_VALUE: &str = "<redacted>";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -195,6 +197,51 @@ fn build_traffic_window(granularity: &TrafficGranularity, days: i32) -> (String,
     }
 }
 
+fn normalize_config_key(key: &str) -> String {
+    key.chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn is_sensitive_config_key(key: &str) -> bool {
+    matches!(
+        normalize_config_key(key).as_str(),
+        "password"
+            | "passwd"
+            | "secret"
+            | "token"
+            | "uuid"
+            | "apikey"
+            | "privatekey"
+            | "auth"
+            | "authstr"
+            | "authorization"
+            | "clientsecret"
+            | "users"
+    )
+}
+
+fn redact_sensitive_config(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(entries) => {
+            let mut sanitized = serde_json::Map::with_capacity(entries.len());
+            for (key, entry_value) in entries {
+                if is_sensitive_config_key(&key) {
+                    sanitized.insert(key, serde_json::Value::String(REDACTED_VALUE.to_string()));
+                } else {
+                    sanitized.insert(key, redact_sensitive_config(entry_value));
+                }
+            }
+            serde_json::Value::Object(sanitized)
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(redact_sensitive_config).collect())
+        }
+        other_value => other_value,
+    }
+}
+
 async fn with_mihomo_client<F, T>(app: &AppHandle, callback: F) -> Result<T, AiSidecarError>
 where
     F: for<'a> FnOnce(
@@ -221,9 +268,11 @@ pub async fn handle_callback(
     match request.method.as_str() {
         "get_config" => {
             let config = with_mihomo_client(app, |client| Box::pin(client.get_configs())).await?;
+            let sanitized_config = redact_sensitive_config(config);
             Ok(serde_json::json!({
                 "source": "mihomo_runtime",
-                "config": config,
+                "sanitized": true,
+                "config": sanitized_config,
             }))
         }
         "get_proxies" => with_mihomo_client(app, |client| Box::pin(client.get_proxies())).await,
@@ -408,15 +457,17 @@ pub async fn handle_callback(
         "get_rule_stats" => {
             let params = parse_params::<DaysOnlyParams>(request.params)?;
             let days = bounded_i32(params.days, 1, 1, 30, "days")?;
+            let db_pool = db::get_db_pool(app)
+                .await
+                .map_err(|error| invalid_callback(error.to_string()))?;
             let rules = cmd::stats::get_rule_stats(app.clone(), days, DEFAULT_RULE_STATS_LIMIT)
                 .await
                 .map_err(|error| invalid_callback(error.to_string()))?;
-            let total_hits = rules.iter().map(|rule| rule.hit_count).sum::<i64>();
-            let match_hits = rules
-                .iter()
-                .find(|rule| rule.rule == "MATCH")
-                .map(|rule| rule.hit_count)
-                .unwrap_or(0);
+            let hit_summary = repo_connection::summarize_rule_hits(&db_pool, days)
+                .await
+                .map_err(|error| invalid_callback(error.to_string()))?;
+            let total_hits = hit_summary.total_hits;
+            let match_hits = hit_summary.match_hits;
             let match_rate = if total_hits == 0 {
                 0.0
             } else {
@@ -436,5 +487,56 @@ pub async fn handle_callback(
             "未知 callback 方法: {other_method}; callbackId={}",
             request.callback_id
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redact_sensitive_config_masks_secret_fields_recursively() {
+        let config = serde_json::json!({
+            "mixed-port": 7890,
+            "secret": "controller-token",
+            "dns": {
+                "nameserver": ["1.1.1.1"],
+                "token": "dns-token"
+            },
+            "proxies": [
+                {
+                    "name": "vmess-node",
+                    "uuid": "uuid-secret",
+                    "server": "example.com"
+                }
+            ],
+            "tuic-server": {
+                "users": [
+                    {
+                        "username": "alice",
+                        "password": "secret-password"
+                    }
+                ],
+                "private-key": "secret-key"
+            }
+        });
+
+        let redacted = redact_sensitive_config(config);
+
+        assert_eq!(redacted["mixed-port"], serde_json::json!(7890));
+        assert_eq!(redacted["secret"], serde_json::json!(REDACTED_VALUE));
+        assert_eq!(redacted["dns"]["token"], serde_json::json!(REDACTED_VALUE));
+        assert_eq!(
+            redacted["proxies"][0]["uuid"],
+            serde_json::json!(REDACTED_VALUE)
+        );
+        assert_eq!(
+            redacted["tuic-server"]["users"],
+            serde_json::json!(REDACTED_VALUE)
+        );
+        assert_eq!(
+            redacted["tuic-server"]["private-key"],
+            serde_json::json!(REDACTED_VALUE)
+        );
     }
 }
