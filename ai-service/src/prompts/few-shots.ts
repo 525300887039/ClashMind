@@ -27,7 +27,44 @@ export const FEW_SHOT_EXAMPLES: ModelMessage[] = [
         type: "tool-result",
         toolCallId: "few-shot-add-group-config",
         toolName: "get_current_config",
-        output: "proxy-groups:\n  - name: 节点选择\n    type: select\n    proxies: [香港-01, 香港-02, 日本-01]\nrules:\n  - MATCH,节点选择",
+        output: {
+          source: "mihomo_runtime",
+          sanitized: true,
+          config: {
+            "mixed-port": 7890,
+            proxies: [
+              {
+                name: "香港-01",
+                type: "ss",
+                server: "<redacted>",
+                port: 443,
+                password: "<redacted>",
+              },
+              {
+                name: "香港-02",
+                type: "trojan",
+                server: "<redacted>",
+                port: 443,
+                password: "<redacted>",
+              },
+              {
+                name: "日本-01",
+                type: "vmess",
+                server: "<redacted>",
+                port: 443,
+                uuid: "<redacted>",
+              },
+            ],
+            "proxy-groups": [
+              {
+                name: "节点选择",
+                type: "select",
+                proxies: ["香港-01", "香港-02", "日本-01"],
+              },
+            ],
+            rules: ["MATCH,节点选择"],
+          },
+        },
       },
     ],
   },
@@ -36,7 +73,7 @@ export const FEW_SHOT_EXAMPLES: ModelMessage[] = [
     content: [
       {
         type: "text",
-        text: "当前存在可复用的香港节点。我将创建一个名为“香港自动”的 url-test 代理组，筛选名称包含“港”或“HK”的节点。",
+        text: "当前配置快照里的 `config` 字段显示已经有可复用的香港节点。我将创建一个名为“香港自动”的 url-test 代理组，筛选名称包含“港”或“HK”的节点。",
       },
       {
         type: "tool-call",
@@ -157,9 +194,13 @@ export const FEW_SHOT_EXAMPLES: ModelMessage[] = [
         toolName: "get_traffic_summary",
         output: {
           days: 7,
-          totalUploadBytes: 234881024,
-          totalDownloadBytes: 3221225472,
-          activeConnections: 18,
+          summary: {
+            totalConnections: 1286,
+            totalUpload: 234881024,
+            totalDownload: 3221225472,
+            activeConnections: 18,
+            uniqueDomains: 146,
+          },
         },
       },
     ],
@@ -189,18 +230,37 @@ export const FEW_SHOT_EXAMPLES: ModelMessage[] = [
         type: "tool-result",
         toolCallId: "few-shot-stats-top-domains",
         toolName: "get_top_domains",
-        output: [
-          { domain: "video.example.com", totalBytes: 2147483648 },
-          { domain: "cdn.example.net", totalBytes: 805306368 },
-          { domain: "openai.com", totalBytes: 268435456 },
-        ],
+        output: {
+          days: 7,
+          limit: 5,
+          domains: [
+            {
+              domain: "video.example.com",
+              hitCount: 412,
+              upload: 157286400,
+              download: 2147483648,
+            },
+            {
+              domain: "cdn.example.net",
+              hitCount: 275,
+              upload: 52428800,
+              download: 805306368,
+            },
+            {
+              domain: "openai.com",
+              hitCount: 96,
+              upload: 24117248,
+              download: 268435456,
+            },
+          ],
+        },
       },
     ],
   },
   {
     role: "assistant",
     content:
-      "最近 7 天下载流量明显高于上传流量，总下载约 3.0 GB。主要流量集中在视频和 CDN 域名，其次才是常规网页访问；如果你想继续优化，我可以再查趋势或按规则命中情况拆分。",
+      "最近 7 天的统计摘要在 `summary` 字段里。下载流量明显高于上传流量，总下载约 3.0 GB；`domains` 列表显示主要流量集中在视频和 CDN 域名，其次才是常规网页访问。如果你想继续优化，我可以再查趋势或按规则命中情况拆分。",
   },
   {
     role: "user",
@@ -229,9 +289,26 @@ export const FEW_SHOT_EXAMPLES: ModelMessage[] = [
         toolCallId: "few-shot-diagnosis-connectivity",
         toolName: "check_connectivity",
         output: {
-          mihomoApi: "ok",
-          collector: "ok",
-          proxyHealth: "degraded",
+          reachable: true,
+          apiAddress: "127.0.0.1:9090",
+          collectorRunning: true,
+          activeConnections: 18,
+          proxyCount: 24,
+          selectedGroups: [
+            {
+              group: "节点选择",
+              current: "香港-02",
+            },
+            {
+              group: "流媒体",
+              current: "日本-01",
+            },
+          ],
+          version: {
+            version: "1.19.0",
+            meta: "mihomo",
+          },
+          issues: ["节点选择 当前节点延迟波动较大"],
         },
       },
     ],
@@ -241,7 +318,7 @@ export const FEW_SHOT_EXAMPLES: ModelMessage[] = [
     content: [
       {
         type: "text",
-        text: "连通性检查显示代理健康状态下降，我继续读取最近 30 分钟的错误摘要。",
+        text: "连通性检查结果显示 API 可达，但 `issues` 里已经提示节点延迟异常。我继续读取最近 30 分钟的错误摘要。",
       },
       {
         type: "tool-call",
@@ -260,23 +337,29 @@ export const FEW_SHOT_EXAMPLES: ModelMessage[] = [
         type: "tool-result",
         toolCallId: "few-shot-diagnosis-errors",
         toolName: "get_recent_errors",
-        output: [
-          {
-            level: "warning",
-            message: "香港-02 latency spike: 1840ms",
-          },
-          {
-            level: "error",
-            message: "日本-01 dial timeout",
-          },
-        ],
+        output: {
+          windowMinutes: 30,
+          issues: [
+            {
+              source: "mihomo_api",
+              severity: "warning",
+              message: "节点选择 当前节点香港-02 最近延迟波动明显",
+            },
+            {
+              source: "runtime",
+              severity: "error",
+              message: "日本-01 最近出现拨号超时，可能影响部分分组切换",
+            },
+          ],
+          note: "当前版本没有独立的持久化错误日志；此结果基于即时运行时健康检查生成。",
+        },
       },
     ],
   },
   {
     role: "assistant",
     content:
-      "目前更像是节点质量下降，不是桌面侧采集器或 mihomo API 故障。最近错误集中在高延迟和拨号超时；下一步适合测试高频节点延迟，或把代理组从故障节点切走。",
+      "从 `check_connectivity.issues` 和 `get_recent_errors.issues` 看，更像是节点质量下降，不是桌面侧采集器或 mihomo API 故障。最近问题集中在高延迟和拨号超时；下一步适合测试高频节点延迟，或把代理组从故障节点切走。",
   },
   {
     role: "user",
