@@ -97,6 +97,55 @@ LIMIT ?;
     Ok(domains)
 }
 
+pub(crate) async fn query_top_domains_by_window(
+    db: &DbPool,
+    start_day: &str,
+    end_day_exclusive: &str,
+    limit: i32,
+) -> Result<Vec<TopDomainRow>, DbError> {
+    if limit <= 0 {
+        return Ok(Vec::new());
+    }
+
+    let pool = sqlite_pool(db)?;
+    let rows = sqlx::query(
+        r#"
+SELECT
+    domain,
+    COALESCE(SUM(hit_count), 0) AS hit_count,
+    COALESCE(SUM(upload), 0) AS upload,
+    COALESCE(SUM(download), 0) AS download
+FROM domain_stats
+WHERE date(day) >= date(?)
+  AND date(day) < date(?)
+GROUP BY domain
+ORDER BY
+    (COALESCE(SUM(upload), 0) + COALESCE(SUM(download), 0)) DESC,
+    COALESCE(SUM(hit_count), 0) DESC,
+    domain ASC
+LIMIT ?;
+"#,
+    )
+    .bind(start_day)
+    .bind(end_day_exclusive)
+    .bind(i64::from(limit.max(0)))
+    .fetch_all(pool)
+    .await
+    .map_err(|error| DbError::QueryFailed(format!("按时间窗口查询域名统计失败: {error}")))?;
+
+    let mut domains = Vec::with_capacity(rows.len());
+    for row in rows {
+        domains.push(TopDomainRow {
+            domain: try_col!(row, "domain", "域名统计"),
+            hit_count: try_col!(row, "hit_count", "域名统计"),
+            upload: try_col!(row, "upload", "域名统计"),
+            download: try_col!(row, "download", "域名统计"),
+        });
+    }
+
+    Ok(domains)
+}
+
 pub(crate) async fn batch_upsert_domain_stats_in_tx(
     transaction: &mut Transaction<'_, Sqlite>,
     updates: &[DomainStatsUpdate],

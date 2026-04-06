@@ -65,6 +65,14 @@ struct RecentErrorsParams {
     minutes: Option<i32>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReportStatsParams {
+    #[serde(rename = "type")]
+    report_type: cmd::ai::ReportType,
+    date: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SelectedProxyGroup {
@@ -298,33 +306,33 @@ pub async fn handle_callback(
     request: AiCallbackRequest,
 ) -> Result<serde_json::Value, AiSidecarError> {
     match request.method.as_str() {
-        "get_config" => {
-            match read_runtime_config(app).await {
-                Ok(config) => Ok(build_sanitized_config_response("mihomo_runtime", config)),
-                Err(runtime_error) => {
-                    let yaml_content = read_active_config_file(app)
+        "get_config" => match read_runtime_config(app).await {
+            Ok(config) => Ok(build_sanitized_config_response("mihomo_runtime", config)),
+            Err(runtime_error) => {
+                let yaml_content = read_active_config_file(app)
                         .await
                         .map_err(|file_error| {
                             invalid_callback(format!(
                                 "读取 Mihomo 运行配置失败: {runtime_error}; 同时读取配置文件失败: {file_error}"
                             ))
                         })?;
-                    let config = parse_config_yaml(&yaml_content).map_err(|file_error| {
+                let config = parse_config_yaml(&yaml_content).map_err(|file_error| {
                         invalid_callback(format!(
                             "读取 Mihomo 运行配置失败: {runtime_error}; 同时解析配置文件失败: {file_error}"
                         ))
                     })?;
 
-                    Ok(build_sanitized_config_response("config_file", config))
-                }
+                Ok(build_sanitized_config_response("config_file", config))
             }
-        }
+        },
         "get_config_file" => {
             let yaml_content = read_active_config_file(app).await?;
             let config = parse_config_yaml(&yaml_content)?;
             Ok(build_sanitized_config_response("config_file", config))
         }
-        "read_active_config_file" => Ok(serde_json::Value::String(read_active_config_file(app).await?)),
+        "read_active_config_file" => Ok(serde_json::Value::String(
+            read_active_config_file(app).await?,
+        )),
         "read_active_runtime_config" => read_runtime_config(app).await,
         "get_proxies" => with_mihomo_client(app, |client| Box::pin(client.get_proxies())).await,
         "test_delay" => {
@@ -533,6 +541,14 @@ pub async fn handle_callback(
                 rules,
             })
             .map_err(|error| invalid_callback(error.to_string()))?)
+        }
+        "get_report_stats" => {
+            let params = parse_params::<ReportStatsParams>(request.params)?;
+            let report = cmd::ai::get_report_stats(app, params.report_type, params.date.as_deref())
+                .await
+                .map_err(|error| invalid_callback(error.to_string()))?;
+
+            serde_json::to_value(report).map_err(|error| invalid_callback(error.to_string()))
         }
         other_method => Err(invalid_callback(format!(
             "未知 callback 方法: {other_method}; callbackId={}",

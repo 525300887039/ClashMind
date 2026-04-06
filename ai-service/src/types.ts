@@ -45,6 +45,124 @@ export const chatParamsSchema = z
 
 export interface ChatParams extends z.infer<typeof chatParamsSchema> {}
 
+export const reportTypeSchema = z.enum(["daily", "weekly"]);
+
+export type ReportType = z.infer<typeof reportTypeSchema>;
+
+export const reportPeriodSchema = z
+  .object({
+    start: z.string().min(1),
+    end: z.string().min(1),
+  })
+  .strict();
+
+export interface ReportPeriod extends z.infer<typeof reportPeriodSchema> {}
+
+export const reportTrafficSummarySchema = z
+  .object({
+    upload: z.number().int().nonnegative(),
+    download: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export interface ReportTrafficSummary extends z.infer<typeof reportTrafficSummarySchema> {}
+
+export const reportDomainStatSchema = z
+  .object({
+    domain: z.string().min(1),
+    traffic: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export interface ReportDomainStat extends z.infer<typeof reportDomainStatSchema> {}
+
+export const reportRuleStatSchema = z
+  .object({
+    rule: z.string().min(1),
+    hitCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export interface ReportRuleStat extends z.infer<typeof reportRuleStatSchema> {}
+
+export const reportComparisonSchema = z
+  .object({
+    trafficChange: z.number().finite(),
+    connectionChange: z.number().finite(),
+  })
+  .strict();
+
+export interface ReportComparison extends z.infer<typeof reportComparisonSchema> {}
+
+export const reportDailyTrendPointSchema = z
+  .object({
+    date: z.string().min(1),
+    upload: z.number().int().nonnegative(),
+    download: z.number().int().nonnegative(),
+    totalTraffic: z.number().int().nonnegative(),
+    connCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export interface ReportDailyTrendPoint extends z.infer<typeof reportDailyTrendPointSchema> {}
+
+function nullToUndefined<TSchema extends z.ZodTypeAny>(schema: TSchema) {
+  return z.preprocess(
+    (value) => (value === null ? undefined : value),
+    schema.optional(),
+  );
+}
+
+export const reportStatsSchema = z
+  .object({
+    totalTraffic: reportTrafficSummarySchema,
+    totalConnections: z.number().int().nonnegative(),
+    topDomains: z.array(reportDomainStatSchema),
+    topRules: z.array(reportRuleStatSchema),
+    peakHour: nullToUndefined(z.string().min(1)),
+    comparison: nullToUndefined(reportComparisonSchema),
+    dailyTrend: nullToUndefined(z.array(reportDailyTrendPointSchema)),
+    matchRate: nullToUndefined(z.number().finite()),
+  })
+  .strict();
+
+export interface ReportStats extends z.infer<typeof reportStatsSchema> {}
+
+export const reportStatsPayloadSchema = z
+  .object({
+    period: reportPeriodSchema,
+    stats: reportStatsSchema,
+  })
+  .strict();
+
+export interface ReportStatsPayload extends z.infer<typeof reportStatsPayloadSchema> {}
+
+const reportDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "date must match YYYY-MM-DD");
+
+export const reportParamsSchema = z
+  .object({
+    type: reportTypeSchema,
+    date: reportDateSchema.optional(),
+    settings: providerSettingsSchema,
+  })
+  .strict();
+
+export interface ReportParams extends z.infer<typeof reportParamsSchema> {}
+
+export const reportResultSchema = z
+  .object({
+    type: reportTypeSchema,
+    period: reportPeriodSchema,
+    content: z.string(),
+    stats: reportStatsSchema,
+    generatedAt: z.string().min(1),
+  })
+  .strict();
+
+export interface ReportResult extends z.infer<typeof reportResultSchema> {}
+
 const textDeltaEventSchema = z
   .object({
     type: z.literal("text_delta"),

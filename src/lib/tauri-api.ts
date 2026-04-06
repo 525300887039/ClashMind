@@ -120,6 +120,60 @@ export interface AiPingResponse {
   timestamp: number;
 }
 
+export type ReportType = "daily" | "weekly";
+
+export interface ReportPeriod {
+  start: string;
+  end: string;
+}
+
+export interface ReportTrafficSummary {
+  upload: number;
+  download: number;
+}
+
+export interface ReportDomainStat {
+  domain: string;
+  traffic: number;
+}
+
+export interface ReportRuleSummary {
+  rule: string;
+  hitCount: number;
+}
+
+export interface ReportComparison {
+  trafficChange: number;
+  connectionChange: number;
+}
+
+export interface ReportDailyTrendPoint {
+  date: string;
+  upload: number;
+  download: number;
+  totalTraffic: number;
+  connCount: number;
+}
+
+export interface ReportStats {
+  totalTraffic: ReportTrafficSummary;
+  totalConnections: number;
+  topDomains: ReportDomainStat[];
+  topRules: ReportRuleSummary[];
+  peakHour?: string;
+  comparison?: ReportComparison;
+  dailyTrend?: ReportDailyTrendPoint[];
+  matchRate?: number;
+}
+
+export interface ReportResult {
+  type: ReportType;
+  period: ReportPeriod;
+  content: string;
+  stats: ReportStats;
+  generatedAt: string;
+}
+
 export interface ConfigSnapshot {
   id: number;
   content: string;
@@ -254,6 +308,16 @@ export const api = {
     stop: () => invoke("stop_ai_service"),
     status: () => invoke<boolean>("get_ai_status"),
     chat: (params: AiChatParams) => invoke("ai_chat", { params }),
+    generateReport: (
+      type: ReportType,
+      date: string | undefined,
+      settings: AiProviderSettings,
+    ) =>
+      invoke<ReportResult>("ai_generate_report", {
+        reportType: type,
+        date,
+        settings,
+      }),
     ping: () => invoke<AiPingResponse>("ai_ping"),
     listSnapshots: (limit: number) =>
       invoke<ConfigSnapshot[]>("list_snapshots", { limit }),

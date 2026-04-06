@@ -61,6 +61,7 @@ pub fn run() {
             cmd::ai::get_ai_status,
             cmd::ai::ai_ping,
             cmd::ai::ai_chat,
+            cmd::ai::ai_generate_report,
             cmd::ai::apply_config_change,
             cmd::ai::reject_config_change,
             cmd::ai::list_snapshots,

@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
+use chrono::{Duration as ChronoDuration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri_plugin_sql::DbPool;
@@ -11,10 +13,11 @@ use crate::{
         sidecar::{self, AiSidecarError, AiSidecarState},
     },
     db::{
-        self,
+        self, repo_connection,
         repo_conversation::ConversationRepo,
+        repo_domain,
         repo_snapshot::{ConfigSnapshot, SnapshotRepo},
-        DbError,
+        repo_traffic, DbError,
     },
     utils::{geoip::GeoIpConfigState, path::expand_tilde},
 };
@@ -23,6 +26,7 @@ use super::MihomoState;
 
 const AI_SNAPSHOT_DESCRIPTION: &str = "AI 配置变更前自动备份";
 const DEFAULT_MANUAL_SNAPSHOT_DESCRIPTION: &str = "手动快照";
+const REPORT_RPC_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -94,6 +98,109 @@ pub struct SaveConversationMessageParams {
     pub model: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReportType {
+    Daily,
+    Weekly,
+}
+
+impl ReportType {
+    fn max_domain_count(&self) -> i32 {
+        match self {
+            Self::Daily => 5,
+            Self::Weekly => 10,
+        }
+    }
+
+    fn max_rule_count(&self) -> i32 {
+        match self {
+            Self::Daily => 5,
+            Self::Weekly => 10,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportPeriod {
+    pub start: String,
+    pub end: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportTrafficSummary {
+    pub upload: i64,
+    pub download: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportDomainStat {
+    pub domain: String,
+    pub traffic: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportRuleStat {
+    pub rule: String,
+    pub hit_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportComparison {
+    pub traffic_change: f64,
+    pub connection_change: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportDailyTrendPoint {
+    pub date: String,
+    pub upload: i64,
+    pub download: i64,
+    pub total_traffic: i64,
+    pub conn_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportStats {
+    pub total_traffic: ReportTrafficSummary,
+    pub total_connections: i64,
+    pub top_domains: Vec<ReportDomainStat>,
+    pub top_rules: Vec<ReportRuleStat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_hour: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comparison: Option<ReportComparison>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub daily_trend: Option<Vec<ReportDailyTrendPoint>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub match_rate: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportStatsPayload {
+    pub period: ReportPeriod,
+    pub stats: ReportStats,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportResult {
+    #[serde(rename = "type")]
+    pub report_type: ReportType,
+    pub period: ReportPeriod,
+    pub content: String,
+    pub stats: ReportStats,
+    pub generated_at: String,
+}
+
 #[derive(Error, Debug)]
 pub enum AiConfigChangeError {
     #[error("{0}")]
@@ -136,6 +243,250 @@ impl Serialize for AiConfigChangeError {
     {
         serializer.serialize_str(&self.to_string())
     }
+}
+
+#[derive(Error, Debug)]
+pub enum AiReportError {
+    #[error("{0}")]
+    Database(#[from] DbError),
+    #[error("{0}")]
+    Sidecar(#[from] AiSidecarError),
+    #[error("报告日期无效: {0}")]
+    InvalidDate(String),
+    #[error("报告参数无效: {0}")]
+    InvalidParams(String),
+    #[error("报告结果无效: {0}")]
+    InvalidResult(String),
+}
+
+impl Serialize for AiReportError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReportWindow {
+    period: ReportPeriod,
+    start_day: NaiveDate,
+    end_day_exclusive: NaiveDate,
+    previous_start_day: NaiveDate,
+    previous_end_day_exclusive: NaiveDate,
+}
+
+fn parse_report_date(date: Option<&str>) -> Result<NaiveDate, AiReportError> {
+    match date {
+        Some(value) => {
+            let trimmed = value.trim();
+            NaiveDate::parse_from_str(trimmed, "%Y-%m-%d")
+                .map_err(|error| AiReportError::InvalidDate(format!("{trimmed} ({error})")))
+        }
+        None => Ok(Utc::now().date_naive()),
+    }
+}
+
+fn build_report_window(report_type: &ReportType, end_date: NaiveDate) -> ReportWindow {
+    match report_type {
+        ReportType::Daily => {
+            let start_day = end_date;
+            let end_day_exclusive = end_date + ChronoDuration::days(1);
+            let previous_start_day = start_day - ChronoDuration::days(1);
+            let previous_end_day_exclusive = start_day;
+
+            ReportWindow {
+                period: ReportPeriod {
+                    start: start_day.to_string(),
+                    end: end_date.to_string(),
+                },
+                start_day,
+                end_day_exclusive,
+                previous_start_day,
+                previous_end_day_exclusive,
+            }
+        }
+        ReportType::Weekly => {
+            let start_day = end_date - ChronoDuration::days(6);
+            let week_end = end_date;
+            let end_day_exclusive = end_date + ChronoDuration::days(1);
+            let previous_start_day = start_day - ChronoDuration::days(7);
+            let previous_end_day_exclusive = start_day;
+
+            ReportWindow {
+                period: ReportPeriod {
+                    start: start_day.to_string(),
+                    end: week_end.to_string(),
+                },
+                start_day,
+                end_day_exclusive,
+                previous_start_day,
+                previous_end_day_exclusive,
+            }
+        }
+    }
+}
+
+fn format_utc_day_start(day: NaiveDate) -> String {
+    format!("{day}T00:00:00Z")
+}
+
+fn percentage_change(current: i64, previous: i64) -> f64 {
+    if previous <= 0 {
+        return 0.0;
+    }
+
+    ((current - previous) as f64 / previous as f64) * 100.0
+}
+
+fn match_rate_percentage(summary: &repo_connection::RuleHitSummary) -> f64 {
+    if summary.total_hits <= 0 {
+        return 0.0;
+    }
+
+    (summary.match_hits as f64 / summary.total_hits as f64) * 100.0
+}
+
+fn build_report_daily_trend(
+    window: &ReportWindow,
+    points: Vec<repo_connection::DailyTrafficTotalRow>,
+) -> Vec<ReportDailyTrendPoint> {
+    let mut point_map = std::collections::HashMap::with_capacity(points.len());
+    for point in points {
+        point_map.insert(point.time.clone(), point);
+    }
+
+    let mut rows = Vec::with_capacity(7);
+    let mut cursor = window.start_day;
+    while cursor < window.end_day_exclusive {
+        let bucket_key = format_utc_day_start(cursor);
+        let point = point_map.remove(&bucket_key);
+        let upload = point.as_ref().map_or(0, |entry| entry.upload);
+        let download = point.as_ref().map_or(0, |entry| entry.download);
+        let conn_count = point.as_ref().map_or(0, |entry| entry.conn_count);
+
+        rows.push(ReportDailyTrendPoint {
+            date: cursor.to_string(),
+            upload,
+            download,
+            total_traffic: upload + download,
+            conn_count,
+        });
+
+        cursor = cursor + ChronoDuration::days(1);
+    }
+
+    rows
+}
+
+fn peak_hour_label(points: &[repo_traffic::TrafficBucketRow]) -> Option<String> {
+    points
+        .iter()
+        .max_by(|left, right| {
+            let left_total = left.upload + left.download;
+            let right_total = right.upload + right.download;
+            left_total
+                .cmp(&right_total)
+                .then_with(|| left.conn_count.cmp(&right.conn_count))
+                .then_with(|| left.time.cmp(&right.time))
+        })
+        .map(|point| point.time.clone())
+}
+
+pub(crate) async fn get_report_stats(
+    app_handle: &AppHandle,
+    report_type: ReportType,
+    date: Option<&str>,
+) -> Result<ReportStatsPayload, AiReportError> {
+    let report_date = parse_report_date(date)?;
+    let window = build_report_window(&report_type, report_date);
+    let start_day = window.start_day.to_string();
+    let end_day_exclusive = window.end_day_exclusive.to_string();
+    let previous_start_day = window.previous_start_day.to_string();
+    let previous_end_day_exclusive = window.previous_end_day_exclusive.to_string();
+    let start_iso = format_utc_day_start(window.start_day);
+    let end_iso = format_utc_day_start(window.end_day_exclusive);
+    let db = db::get_db_pool(app_handle).await?;
+
+    let current_overview =
+        repo_connection::get_overview_by_window(&db, &start_day, &end_day_exclusive).await?;
+    let previous_overview = repo_connection::get_overview_by_window(
+        &db,
+        &previous_start_day,
+        &previous_end_day_exclusive,
+    )
+    .await?;
+    let top_domains = repo_domain::query_top_domains_by_window(
+        &db,
+        &start_day,
+        &end_day_exclusive,
+        report_type.max_domain_count(),
+    )
+    .await?;
+    let top_rules = repo_connection::query_rule_stats_by_window(
+        &db,
+        &start_day,
+        &end_day_exclusive,
+        report_type.max_rule_count(),
+    )
+    .await?;
+    let rule_hit_summary =
+        repo_connection::summarize_rule_hits_by_window(&db, &start_day, &end_day_exclusive).await?;
+
+    let peak_hour = if report_type == ReportType::Daily {
+        let hourly_points = repo_traffic::query_hourly(&db, &start_iso, &end_iso).await?;
+        peak_hour_label(&hourly_points)
+    } else {
+        None
+    };
+
+    let daily_trend = if report_type == ReportType::Weekly {
+        let daily_points =
+            repo_connection::query_daily_totals_by_window(&db, &start_day, &end_day_exclusive)
+                .await?;
+        Some(build_report_daily_trend(&window, daily_points))
+    } else {
+        None
+    };
+
+    let current_total_traffic = current_overview.total_upload + current_overview.total_download;
+    let previous_total_traffic = previous_overview.total_upload + previous_overview.total_download;
+
+    Ok(ReportStatsPayload {
+        period: window.period,
+        stats: ReportStats {
+            total_traffic: ReportTrafficSummary {
+                upload: current_overview.total_upload,
+                download: current_overview.total_download,
+            },
+            total_connections: current_overview.total_connections,
+            top_domains: top_domains
+                .into_iter()
+                .map(|row| ReportDomainStat {
+                    domain: row.domain,
+                    traffic: row.upload + row.download,
+                })
+                .collect(),
+            top_rules: top_rules
+                .into_iter()
+                .map(|row| ReportRuleStat {
+                    rule: row.rule,
+                    hit_count: row.hit_count,
+                })
+                .collect(),
+            peak_hour,
+            comparison: Some(ReportComparison {
+                traffic_change: percentage_change(current_total_traffic, previous_total_traffic),
+                connection_change: percentage_change(
+                    current_overview.total_connections,
+                    previous_overview.total_connections,
+                ),
+            }),
+            daily_trend,
+            match_rate: Some(match_rate_percentage(&rule_hit_summary)),
+        },
+    })
 }
 
 fn active_config_file_path(geoip_config: &GeoIpConfigState) -> PathBuf {
@@ -362,6 +713,41 @@ pub fn ai_chat(
 }
 
 #[tauri::command]
+pub async fn ai_generate_report(
+    app: AppHandle,
+    state: tauri::State<'_, AiSidecarState>,
+    report_type: ReportType,
+    date: Option<String>,
+    settings: AiProviderSettings,
+) -> Result<ReportResult, AiReportError> {
+    if settings.model.trim().is_empty() {
+        return Err(AiReportError::InvalidParams(
+            "report model must not be empty".to_string(),
+        ));
+    }
+
+    if !sidecar::is_ai_running(&state) {
+        sidecar::start_ai(&app, &state).await?;
+    }
+
+    let payload = serde_json::json!({
+        "type": report_type,
+        "date": date,
+        "settings": settings,
+    });
+    let response = sidecar::send_rpc_with_timeout(
+        &state,
+        "generate_report",
+        Some(payload),
+        REPORT_RPC_TIMEOUT,
+    )
+    .await?;
+
+    serde_json::from_value(response)
+        .map_err(|error| AiReportError::InvalidResult(error.to_string()))
+}
+
+#[tauri::command]
 pub async fn apply_config_change(
     app_handle: AppHandle,
     geoip_config: tauri::State<'_, GeoIpConfigState>,
@@ -482,4 +868,27 @@ pub async fn save_conversation_message(
     let _deleted = ConversationRepo::cleanup(&db).await?;
 
     Ok(message_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn weekly_report_window_uses_selected_end_date_as_period_end() {
+        let end_date = NaiveDate::from_ymd_opt(2026, 4, 9);
+        assert!(end_date.is_some());
+        let Some(end_date) = end_date else {
+            panic!("date should be valid");
+        };
+
+        let window = build_report_window(&ReportType::Weekly, end_date);
+
+        assert_eq!(window.period.start, "2026-04-03");
+        assert_eq!(window.period.end, "2026-04-09");
+        assert_eq!(window.start_day.to_string(), "2026-04-03");
+        assert_eq!(window.end_day_exclusive.to_string(), "2026-04-10");
+        assert_eq!(window.previous_start_day.to_string(), "2026-03-27");
+        assert_eq!(window.previous_end_day_exclusive.to_string(), "2026-04-03");
+    }
 }

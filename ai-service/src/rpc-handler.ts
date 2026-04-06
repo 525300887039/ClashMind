@@ -1,7 +1,8 @@
-import { stepCountIs, streamText } from "ai";
+import { generateText, stepCountIs, streamText } from "ai";
 import { z } from "zod";
 
 import { assemblePrompt } from "./prompts/index.js";
+import { buildReportPrompt } from "./prompts/report.js";
 import { createModel } from "./providers/index.js";
 import {
   ConfigSanitizer,
@@ -19,6 +20,8 @@ import { handleRustCallbackResponse, requestFromRust } from "./tools/rust-rpc.js
 import {
   chatParamsSchema,
   type ChatParams,
+  reportParamsSchema,
+  reportStatsPayloadSchema,
   type StreamEvent,
 } from "./types.js";
 
@@ -465,6 +468,42 @@ registerHandler("chat", async (params, context) => {
   }
 
   return HANDLED_EXTERNALLY;
+});
+
+registerHandler("generate_report", async (params) => {
+  const parsedParams = reportParamsSchema.safeParse(params);
+
+  if (!parsedParams.success) {
+    throw new Error(parsedParams.error.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const reportParams = parsedParams.data;
+  const statsResponse = await requestFromRust("get_report_stats", {
+    type: reportParams.type,
+    ...(reportParams.date === undefined ? {} : { date: reportParams.date }),
+  });
+  const parsedStats = reportStatsPayloadSchema.safeParse(statsResponse);
+
+  if (!parsedStats.success) {
+    throw new Error(
+      parsedStats.error.issues.map((issue) => issue.message).join("; "),
+    );
+  }
+
+  const prompt = buildReportPrompt(reportParams.type, parsedStats.data);
+  const { text } = await generateText({
+    model: createModel(reportParams.settings),
+    prompt,
+    temperature: reportParams.settings.temperature ?? 0.35,
+  });
+
+  return {
+    type: reportParams.type,
+    period: parsedStats.data.period,
+    content: text.trim(),
+    stats: parsedStats.data.stats,
+    generatedAt: new Date().toISOString(),
+  };
 });
 
 export function registerHandler(method: string, handler: JsonRpcHandler): void {

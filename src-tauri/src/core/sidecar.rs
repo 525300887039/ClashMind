@@ -554,6 +554,15 @@ pub async fn send_rpc(
     method: &str,
     params: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, AiSidecarError> {
+    send_rpc_with_timeout(state, method, params, AI_RPC_TIMEOUT).await
+}
+
+pub async fn send_rpc_with_timeout(
+    state: &AiSidecarState,
+    method: &str,
+    params: Option<serde_json::Value>,
+    timeout: Duration,
+) -> Result<serde_json::Value, AiSidecarError> {
     let request_id = state
         .next_request_id
         .fetch_add(1, Ordering::Relaxed)
@@ -593,7 +602,7 @@ pub async fn send_rpc(
         }
     }
 
-    match tokio::time::timeout(AI_RPC_TIMEOUT, response_rx).await {
+    match tokio::time::timeout(timeout, response_rx).await {
         Ok(Ok(result)) => result,
         Ok(Err(_)) => Err(AiSidecarError::RequestCancelled),
         Err(_) => {

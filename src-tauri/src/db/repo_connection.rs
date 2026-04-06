@@ -36,6 +36,14 @@ pub(crate) struct RuleHitSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DailyTrafficTotalRow {
+    pub time: String,
+    pub upload: i64,
+    pub download: i64,
+    pub conn_count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GeoIpTrafficRow {
     pub dst_ip: String,
     pub conn_count: i64,
@@ -257,6 +265,212 @@ SELECT
     })
 }
 
+pub(crate) async fn get_overview_by_window(
+    db: &DbPool,
+    start_day: &str,
+    end_day_exclusive: &str,
+) -> Result<ConnectionOverview, DbError> {
+    let pool = sqlite_pool(db)?;
+    let row = sqlx::query(
+        r#"
+WITH window AS (
+    SELECT
+        date(?) AS window_start,
+        date(?) AS window_end
+),
+scoped_connections AS (
+    SELECT
+        id,
+        close_time,
+        last_observed_at,
+        start_time
+    FROM connections, window
+    WHERE date(COALESCE(close_time, last_observed_at, start_time)) >= window.window_start
+      AND date(COALESCE(close_time, last_observed_at, start_time)) < window.window_end
+),
+daily_traffic_candidates AS (
+    SELECT
+        day,
+        upload,
+        download,
+        upload + download AS total_bytes,
+        2 AS source_priority
+    FROM traffic_daily, window
+    WHERE date(day) >= window.window_start
+      AND date(day) < window.window_end
+
+    UNION ALL
+
+    SELECT
+        day,
+        COALESCE(SUM(upload), 0) AS upload,
+        COALESCE(SUM(download), 0) AS download,
+        COALESCE(SUM(upload), 0) + COALESCE(SUM(download), 0) AS total_bytes,
+        1 AS source_priority
+    FROM domain_stats, window
+    WHERE date(day) >= window.window_start
+      AND date(day) < window.window_end
+    GROUP BY day
+),
+daily_traffic_totals AS (
+    SELECT
+        day,
+        upload,
+        download
+    FROM (
+        SELECT
+            day,
+            upload,
+            download,
+            ROW_NUMBER() OVER (
+                PARTITION BY day
+                ORDER BY total_bytes DESC, source_priority DESC
+            ) AS row_number
+        FROM daily_traffic_candidates
+    )
+    WHERE row_number = 1
+)
+SELECT
+    (
+        SELECT COUNT(*)
+        FROM scoped_connections
+    ) AS total_connections,
+    (
+        SELECT COALESCE(SUM(upload), 0)
+        FROM daily_traffic_totals
+    ) AS total_upload,
+    (
+        SELECT COALESCE(SUM(download), 0)
+        FROM daily_traffic_totals
+    ) AS total_download,
+    (
+        SELECT COUNT(*)
+        FROM scoped_connections
+        WHERE close_time IS NULL
+    ) AS active_connections,
+    (
+        SELECT COUNT(DISTINCT domain)
+        FROM domain_stats, window
+        WHERE date(day) >= window.window_start
+          AND date(day) < window.window_end
+          AND TRIM(domain) <> ''
+    ) AS unique_domains;
+"#,
+    )
+    .bind(start_day)
+    .bind(end_day_exclusive)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| DbError::QueryFailed(format!("按时间窗口查询统计概览失败: {error}")))?;
+
+    Ok(ConnectionOverview {
+        total_connections: try_col!(row, "total_connections", "统计概览"),
+        total_upload: try_col!(row, "total_upload", "统计概览"),
+        total_download: try_col!(row, "total_download", "统计概览"),
+        active_connections: try_col!(row, "active_connections", "统计概览"),
+        unique_domains: try_col!(row, "unique_domains", "统计概览"),
+    })
+}
+
+pub(crate) async fn query_daily_totals_by_window(
+    db: &DbPool,
+    start_day: &str,
+    end_day_exclusive: &str,
+) -> Result<Vec<DailyTrafficTotalRow>, DbError> {
+    let pool = sqlite_pool(db)?;
+    let rows = sqlx::query(
+        r#"
+WITH window AS (
+    SELECT
+        date(?) AS window_start,
+        date(?) AS window_end
+),
+daily_traffic_candidates AS (
+    SELECT
+        day,
+        upload,
+        download,
+        upload + download AS total_bytes,
+        2 AS source_priority
+    FROM traffic_daily, window
+    WHERE date(day) >= window.window_start
+      AND date(day) < window.window_end
+
+    UNION ALL
+
+    SELECT
+        day,
+        COALESCE(SUM(upload), 0) AS upload,
+        COALESCE(SUM(download), 0) AS download,
+        COALESCE(SUM(upload), 0) + COALESCE(SUM(download), 0) AS total_bytes,
+        1 AS source_priority
+    FROM domain_stats, window
+    WHERE date(day) >= window.window_start
+      AND date(day) < window.window_end
+    GROUP BY day
+),
+daily_traffic_totals AS (
+    SELECT
+        day,
+        upload,
+        download
+    FROM (
+        SELECT
+            day,
+            upload,
+            download,
+            ROW_NUMBER() OVER (
+                PARTITION BY day
+                ORDER BY total_bytes DESC, source_priority DESC
+            ) AS row_number
+        FROM daily_traffic_candidates
+    )
+    WHERE row_number = 1
+),
+daily_connection_totals AS (
+    SELECT
+        date(COALESCE(close_time, last_observed_at, start_time)) AS day,
+        COUNT(*) AS conn_count
+    FROM connections, window
+    WHERE date(COALESCE(close_time, last_observed_at, start_time)) >= window.window_start
+      AND date(COALESCE(close_time, last_observed_at, start_time)) < window.window_end
+    GROUP BY date(COALESCE(close_time, last_observed_at, start_time))
+),
+day_keys AS (
+    SELECT day FROM daily_traffic_totals
+    UNION
+    SELECT day FROM daily_connection_totals
+)
+SELECT
+    printf('%sT00:00:00Z', day_keys.day) AS time,
+    COALESCE(daily_traffic_totals.upload, 0) AS upload,
+    COALESCE(daily_traffic_totals.download, 0) AS download,
+    COALESCE(daily_connection_totals.conn_count, 0) AS conn_count
+FROM day_keys
+LEFT JOIN daily_traffic_totals ON daily_traffic_totals.day = day_keys.day
+LEFT JOIN daily_connection_totals ON daily_connection_totals.day = day_keys.day
+ORDER BY date(day_keys.day) ASC;
+"#,
+    )
+    .bind(start_day)
+    .bind(end_day_exclusive)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| DbError::QueryFailed(format!("按时间窗口查询日级流量失败: {error}")))?;
+
+    let mut points = Vec::with_capacity(rows.len());
+    for row in rows {
+        points.push(DailyTrafficTotalRow {
+            time: try_col!(row, "time", "日级流量"),
+            upload: try_col!(row, "upload", "日级流量"),
+            download: try_col!(row, "download", "日级流量"),
+            conn_count: try_col!(row, "conn_count", "日级流量"),
+        });
+    }
+
+    Ok(points)
+}
+
 pub(crate) async fn query_rule_stats(
     db: &DbPool,
     days: i32,
@@ -303,6 +517,55 @@ LIMIT ?;
     Ok(rules)
 }
 
+pub(crate) async fn query_rule_stats_by_window(
+    db: &DbPool,
+    start_day: &str,
+    end_day_exclusive: &str,
+    limit: i32,
+) -> Result<Vec<RuleStatRow>, DbError> {
+    if limit <= 0 {
+        return Ok(Vec::new());
+    }
+
+    let pool = sqlite_pool(db)?;
+    let rows = sqlx::query(
+        r#"
+SELECT
+    COALESCE(NULLIF(TRIM(rule), ''), 'UNKNOWN') AS rule,
+    COALESCE(SUM(hit_count), 0) AS hit_count,
+    COALESCE(SUM(upload), 0) AS upload,
+    COALESCE(SUM(download), 0) AS download
+FROM rule_stats
+WHERE date(day) >= date(?)
+  AND date(day) < date(?)
+GROUP BY COALESCE(NULLIF(TRIM(rule), ''), 'UNKNOWN')
+ORDER BY
+    (COALESCE(SUM(upload), 0) + COALESCE(SUM(download), 0)) DESC,
+    COALESCE(SUM(hit_count), 0) DESC,
+    rule ASC
+LIMIT ?;
+"#,
+    )
+    .bind(start_day)
+    .bind(end_day_exclusive)
+    .bind(i64::from(limit.max(0)))
+    .fetch_all(pool)
+    .await
+    .map_err(|error| DbError::QueryFailed(format!("按时间窗口查询规则统计失败: {error}")))?;
+
+    let mut rules = Vec::with_capacity(rows.len());
+    for row in rows {
+        rules.push(RuleStatRow {
+            rule: try_col!(row, "rule", "规则统计"),
+            hit_count: try_col!(row, "hit_count", "规则统计"),
+            upload: try_col!(row, "upload", "规则统计"),
+            download: try_col!(row, "download", "规则统计"),
+        });
+    }
+
+    Ok(rules)
+}
+
 pub(crate) async fn summarize_rule_hits(db: &DbPool, days: i32) -> Result<RuleHitSummary, DbError> {
     let pool = sqlite_pool(db)?;
     let row = sqlx::query(
@@ -326,6 +589,42 @@ WHERE date(day) >= date('now', '-' || ? || ' days');
     .fetch_one(pool)
     .await
     .map_err(|error| DbError::QueryFailed(format!("查询规则命中汇总失败: {error}")))?;
+
+    Ok(RuleHitSummary {
+        total_hits: try_col!(row, "total_hits", "规则命中汇总"),
+        match_hits: try_col!(row, "match_hits", "规则命中汇总"),
+    })
+}
+
+pub(crate) async fn summarize_rule_hits_by_window(
+    db: &DbPool,
+    start_day: &str,
+    end_day_exclusive: &str,
+) -> Result<RuleHitSummary, DbError> {
+    let pool = sqlite_pool(db)?;
+    let row = sqlx::query(
+        r#"
+SELECT
+    COALESCE(SUM(hit_count), 0) AS total_hits,
+    COALESCE(
+        SUM(
+            CASE
+                WHEN COALESCE(NULLIF(TRIM(rule), ''), 'UNKNOWN') = 'MATCH' THEN hit_count
+                ELSE 0
+            END
+        ),
+        0
+    ) AS match_hits
+FROM rule_stats
+WHERE date(day) >= date(?)
+  AND date(day) < date(?);
+"#,
+    )
+    .bind(start_day)
+    .bind(end_day_exclusive)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| DbError::QueryFailed(format!("按时间窗口查询规则命中汇总失败: {error}")))?;
 
     Ok(RuleHitSummary {
         total_hits: try_col!(row, "total_hits", "规则命中汇总"),
@@ -562,6 +861,7 @@ WHERE id = ?;
 
 #[cfg(test)]
 mod tests {
+    use chrono::{Duration as ChronoDuration, Utc};
     use sqlx::{sqlite::SqlitePoolOptions, Row};
 
     use super::*;
@@ -1028,5 +1328,80 @@ INSERT INTO domain_stats (domain, day, hit_count, upload, download) VALUES
         assert_eq!(overview.total_download, 95);
         assert_eq!(overview.active_connections, 1);
         assert_eq!(overview.unique_domains, 2);
+    }
+
+    #[tokio::test]
+    async fn query_daily_totals_by_window_falls_back_to_domain_stats_and_connection_counts() {
+        let db = prepare_db().await;
+        assert!(db.is_ok());
+        let Ok(db) = db else {
+            panic!("test database should be created");
+        };
+
+        let pool = sqlite_pool(&db);
+        assert!(pool.is_ok());
+        let Ok(pool) = pool else {
+            panic!("sqlite pool should be available");
+        };
+
+        let insert = sqlx::query(
+            r#"
+INSERT INTO connections (
+    id, host, network, conn_type, rule, proxy_chain, upload, download, start_time, close_time, last_observed_at
+) VALUES
+    (
+        'conn-1',
+        'alpha.example',
+        'tcp',
+        'HTTPS',
+        'MATCH',
+        '["DIRECT"]',
+        25,
+        35,
+        strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', '-1 hours')),
+        NULL,
+        strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now'))
+    ),
+    (
+        'conn-2',
+        'beta.example',
+        'tcp',
+        'HTTPS',
+        'MATCH',
+        '["DIRECT"]',
+        10,
+        20,
+        strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', '-1 day', '-2 hours')),
+        strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', '-1 day', '-1 hours')),
+        strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', '-1 day', '-1 hours'))
+    );
+
+INSERT INTO traffic_daily (day, upload, download, conn_count) VALUES
+    (date('now'), 10, 15, 1);
+
+INSERT INTO domain_stats (domain, day, hit_count, upload, download) VALUES
+    ('alpha.example', date('now'), 1, 25, 35),
+    ('beta.example', date('now', '-1 day'), 1, 40, 60);
+"#,
+        )
+        .execute(pool)
+        .await;
+        assert!(insert.is_ok());
+
+        let start_day = (Utc::now().date_naive() - ChronoDuration::days(1)).to_string();
+        let end_day_exclusive = (Utc::now().date_naive() + ChronoDuration::days(1)).to_string();
+        let totals = query_daily_totals_by_window(&db, &start_day, &end_day_exclusive).await;
+        assert!(totals.is_ok());
+        let Ok(totals) = totals else {
+            panic!("daily totals should be queryable");
+        };
+
+        assert_eq!(totals.len(), 2);
+        assert_eq!(totals[0].upload, 40);
+        assert_eq!(totals[0].download, 60);
+        assert_eq!(totals[0].conn_count, 1);
+        assert_eq!(totals[1].upload, 25);
+        assert_eq!(totals[1].download, 35);
+        assert_eq!(totals[1].conn_count, 1);
     }
 }
