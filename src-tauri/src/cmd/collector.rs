@@ -28,14 +28,8 @@ pub async fn start_collector(
     app_handle.state::<RealtimeStore>().reset().await;
     let handle = app_handle.clone();
     let task = tauri::async_runtime::spawn(async move {
-        ws_client::run_connections_collector(
-            handle,
-            api_address,
-            api_secret,
-            cancel_rx,
-            done_tx,
-        )
-        .await;
+        ws_client::run_connections_collector(handle, api_address, api_secret, cancel_rx, done_tx)
+            .await;
     });
 
     if let Err(error) = state.start_runtime(cancel_tx, done_rx, task) {
