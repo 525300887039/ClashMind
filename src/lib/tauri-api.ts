@@ -86,10 +86,46 @@ export interface GeoStat {
   totalTraffic: number;
 }
 
+export type AiProviderKind = "openai" | "claude" | "deepseek" | "ollama";
+
+export type AiChatRole = "user" | "assistant" | "system";
+
+export interface AiProviderSettings {
+  provider: AiProviderKind;
+  model: string;
+  apiKey?: string;
+  baseUrl?: string;
+  temperature?: number;
+}
+
+export interface AiChatMessage {
+  role: AiChatRole;
+  content: string;
+}
+
+export interface AiChatContext {
+  currentConfig?: string;
+  recentStats?: Record<string, unknown>;
+  availableProxies?: string[];
+}
+
+export interface AiChatParams {
+  messages: AiChatMessage[];
+  context?: AiChatContext;
+  settings: AiProviderSettings;
+}
+
 export interface AiPingResponse {
   pong: boolean;
   timestamp: number;
 }
+
+export type AiStreamEvent =
+  | { type: "text_delta"; content: string }
+  | { type: "tool_call"; name: string; id: string; input: Record<string, unknown> }
+  | { type: "tool_result"; id: string; content: unknown }
+  | { type: "error"; message: string }
+  | { type: "done"; tokensUsed?: number };
 
 export const api = {
   mihomo: {
@@ -104,6 +140,7 @@ export const api = {
     start: () => invoke("start_ai_service"),
     stop: () => invoke("stop_ai_service"),
     status: () => invoke<boolean>("get_ai_status"),
+    chat: (params: AiChatParams) => invoke("ai_chat", { params }),
     ping: () => invoke<AiPingResponse>("ai_ping"),
   },
   proxy: {

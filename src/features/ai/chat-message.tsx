@@ -1,0 +1,309 @@
+import * as Accordion from "@radix-ui/react-accordion";
+import { motion } from "framer-motion";
+import type { ReactNode } from "react";
+import type { Components } from "react-markdown";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import {
+  Bot,
+  CheckCircle2,
+  ChevronDown,
+  Clock3,
+  type LucideIcon,
+  TriangleAlert,
+  UserRound,
+  Wrench,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { AiMessage, AiToolCall } from "@/stores/ai-store";
+
+const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+const markdownComponents: Components = {
+  p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
+  ul: ({ children }) => <ul className="mb-3 list-disc space-y-1.5 pl-5 last:mb-0">{children}</ul>,
+  ol: ({ children }) => (
+    <ol className="mb-3 list-decimal space-y-1.5 pl-5 last:mb-0">{children}</ol>
+  ),
+  li: ({ children }) => <li className="leading-7">{children}</li>,
+  blockquote: ({ children }) => (
+    <blockquote className="mb-3 border-l-2 border-primary/35 pl-4 text-muted-foreground italic last:mb-0">
+      {children}
+    </blockquote>
+  ),
+  a: ({ children, href }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="font-medium text-primary underline decoration-primary/40 underline-offset-4 transition-colors hover:text-primary/80"
+    >
+      {children}
+    </a>
+  ),
+  code: ({ children }) => (
+    <code className="rounded-md bg-muted/70 px-1.5 py-0.5 font-mono text-[0.82em] text-primary">
+      {children}
+    </code>
+  ),
+  pre: ({ children }) => (
+    <pre className="mb-3 overflow-x-auto rounded-[1rem] border border-white/10 bg-slate-950/92 p-4 text-[13px] leading-6 text-slate-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] last:mb-0 [&>code]:bg-transparent [&>code]:p-0 [&>code]:text-inherit">
+      {children}
+    </pre>
+  ),
+  table: ({ children }) => (
+    <div className="mb-3 overflow-x-auto rounded-[1rem] border border-border/70 last:mb-0">
+      <table className="min-w-full border-collapse text-sm">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => <thead className="bg-muted/50 text-left">{children}</thead>,
+  th: ({ children }) => (
+    <th className="border-b border-border/70 px-3 py-2 font-medium text-foreground">{children}</th>
+  ),
+  td: ({ children }) => <td className="border-b border-border/60 px-3 py-2">{children}</td>,
+};
+
+const TOOL_STATUS_META: Record<
+  AiToolCall["status"],
+  { label: string; className: string; icon: LucideIcon }
+> = {
+  pending: {
+    label: "等待中",
+    className: "border-border/70 bg-muted/40 text-muted-foreground",
+    icon: Clock3,
+  },
+  executing: {
+    label: "执行中",
+    className: "border-primary/20 bg-primary/10 text-primary",
+    icon: Wrench,
+  },
+  completed: {
+    label: "已完成",
+    className: "border-emerald-500/20 bg-emerald-500/10 text-emerald-400",
+    icon: CheckCircle2,
+  },
+  error: {
+    label: "失败",
+    className: "border-destructive/20 bg-destructive/10 text-destructive",
+    icon: TriangleAlert,
+  },
+};
+
+function formatStructuredValue(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return "无法序列化该工具输出";
+  }
+}
+
+function MessageIcon({ role }: { role: AiMessage["role"] }) {
+  if (role === "user") {
+    return <UserRound className="size-4" />;
+  }
+
+  return <Bot className="size-4" />;
+}
+
+function RoleLabel({ role }: { role: AiMessage["role"] }) {
+  const label = role === "user" ? "你" : role === "assistant" ? "AI 助手" : "系统";
+  return <span>{label}</span>;
+}
+
+function StructuredPanel({
+  label,
+  content,
+}: {
+  label: string;
+  content: string;
+}) {
+  return (
+    <section className="rounded-[1rem] border border-border/70 bg-muted/25 p-3">
+      <p className="mb-2 text-[11px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
+        {label}
+      </p>
+      <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-6 text-foreground">
+        {content}
+      </pre>
+    </section>
+  );
+}
+
+function ToolCallCard({ toolCall }: { toolCall: AiToolCall }) {
+  const meta = TOOL_STATUS_META[toolCall.status];
+  const StatusIcon = meta.icon;
+
+  return (
+    <Accordion.Item
+      value={toolCall.id}
+      className="overflow-hidden rounded-[1.25rem] border border-border/70 bg-background/60"
+    >
+      <Accordion.Header>
+        <Accordion.Trigger className="group flex w-full items-center gap-3 px-4 py-3 text-left">
+          <div className="flex size-8 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <Wrench className="size-4" />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium text-foreground">{toolCall.name}</div>
+            <div className="mt-0.5 text-xs text-muted-foreground">工具调用 ID · {toolCall.id}</div>
+          </div>
+
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium tracking-[0.16em] uppercase",
+              meta.className,
+            )}
+          >
+            <StatusIcon className="size-3.5" />
+            {meta.label}
+          </span>
+
+          <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+        </Accordion.Trigger>
+      </Accordion.Header>
+
+      <Accordion.Content className="overflow-hidden border-t border-border/70 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+        <div className="grid gap-3 p-4 xl:grid-cols-2">
+          <StructuredPanel label="参数" content={formatStructuredValue(toolCall.input)} />
+          <StructuredPanel
+            label="结果"
+            content={
+              toolCall.result === undefined ? "等待工具返回结果..." : formatStructuredValue(toolCall.result)
+            }
+          />
+        </div>
+      </Accordion.Content>
+    </Accordion.Item>
+  );
+}
+
+function AssistantContent({ message }: { message: AiMessage }) {
+  const hasText = message.content.trim().length > 0;
+
+  if (!hasText && message.isStreaming) {
+    return (
+      <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+        <span>正在组织回复</span>
+        <span className="h-4 w-2 animate-pulse rounded-full bg-primary/80" />
+      </div>
+    );
+  }
+
+  if (!hasText) {
+    return null;
+  }
+
+  return (
+    <div className="text-sm leading-7 text-foreground">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {message.content}
+      </ReactMarkdown>
+      {message.isStreaming ? (
+        <span className="inline-flex h-4 w-2 translate-y-[3px] animate-pulse rounded-full bg-primary/80" />
+      ) : null}
+    </div>
+  );
+}
+
+function UserContent({ content }: { content: string }) {
+  return <p className="whitespace-pre-wrap text-sm leading-7 text-primary-foreground">{content}</p>;
+}
+
+function MessageBody({ message }: { message: AiMessage }) {
+  if (message.role === "user") {
+    return <UserContent content={message.content} />;
+  }
+
+  return <AssistantContent message={message} />;
+}
+
+function ToolCalls({ toolCalls }: { toolCalls: AiToolCall[] }) {
+  if (toolCalls.length === 0) {
+    return null;
+  }
+
+  return (
+    <Accordion.Root type="multiple" className="mt-4 space-y-2">
+      {toolCalls.map((toolCall) => (
+        <ToolCallCard key={toolCall.id} toolCall={toolCall} />
+      ))}
+    </Accordion.Root>
+  );
+}
+
+function BubbleFrame({
+  message,
+  children,
+}: {
+  message: AiMessage;
+  children: ReactNode;
+}) {
+  if (message.role === "user") {
+    return (
+      <div className="max-w-[min(42rem,100%)] rounded-[1.75rem] bg-linear-to-br from-primary via-primary to-primary/70 px-5 py-4 shadow-[0_24px_60px_-34px_var(--color-primary)]">
+        {children}
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative max-w-[min(46rem,100%)] overflow-hidden rounded-[1.9rem] border border-border/70 bg-linear-to-br from-primary/10 via-background/96 to-background/92 px-5 py-4 shadow-[0_28px_90px_-48px_rgba(15,23,42,0.6)]">
+      <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-linear-to-r from-transparent via-primary/25 to-transparent" />
+      <div className="pointer-events-none absolute -right-12 top-0 size-28 rounded-full bg-primary/10 blur-3xl" />
+      <div className="relative">{children}</div>
+    </div>
+  );
+}
+
+export function ChatMessage({ message }: { message: AiMessage }) {
+  const isUser = message.role === "user";
+
+  return (
+    <motion.article
+      layout
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, ease: "easeOut" }}
+      className={cn("flex", isUser ? "justify-end" : "justify-start")}
+    >
+      <BubbleFrame message={message}>
+        <div className="mb-3 flex items-center gap-2 text-xs font-medium tracking-[0.18em] uppercase">
+          <span
+            className={cn(
+              "inline-flex size-7 items-center justify-center rounded-full border",
+              isUser
+                ? "border-white/20 bg-white/12 text-white"
+                : "border-primary/20 bg-primary/10 text-primary",
+            )}
+          >
+            <MessageIcon role={message.role} />
+          </span>
+
+          <span className={cn(isUser ? "text-primary-foreground/80" : "text-muted-foreground")}>
+            <RoleLabel role={message.role} />
+          </span>
+
+          <span
+            className={cn(
+              "ml-auto",
+              isUser ? "text-primary-foreground/70" : "text-muted-foreground",
+            )}
+          >
+            {timeFormatter.format(message.timestamp)}
+          </span>
+        </div>
+
+        <MessageBody message={message} />
+        <ToolCalls toolCalls={message.toolCalls} />
+      </BubbleFrame>
+    </motion.article>
+  );
+}

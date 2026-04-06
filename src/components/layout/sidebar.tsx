@@ -1,4 +1,5 @@
 import {
+  Sparkles,
   Globe,
   Cable,
   ChartNoAxesCombined,
@@ -14,6 +15,7 @@ import { cn } from "@/lib/utils";
 const NAV_ITEMS: { page: Page; label: string; icon: LucideIcon }[] = [
   { page: "proxies", label: "代理", icon: Globe },
   { page: "connections", label: "连接", icon: Cable },
+  { page: "ai", label: "AI 助手", icon: Sparkles },
   { page: "stats", label: "统计", icon: ChartNoAxesCombined },
   { page: "rules", label: "规则", icon: Shield },
   { page: "logs", label: "日志", icon: ScrollText },

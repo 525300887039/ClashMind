@@ -2,6 +2,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "@/lib/query-client";
 import { AppLayout } from "@/components/layout/app-layout";
 import { useAppStore, type Page } from "@/stores/app-store";
+import { ChatPanel } from "@/features/ai/chat-panel";
 import { ProxyPage } from "@/features/proxy/proxy-page";
 import { ConnectionsPage } from "@/features/connections/connections-page";
 import { RulesPage } from "@/features/rules/rules-page";
@@ -14,6 +15,7 @@ import { useAppInit } from "@/hooks/use-app-init";
 const PAGE_MAP: Record<Page, React.ReactNode> = {
   proxies: <ProxyPage />,
   connections: <ConnectionsPage />,
+  ai: <ChatPanel />,
   stats: <StatsPage />,
   rules: <RulesPage />,
   logs: <LogsPage />,
