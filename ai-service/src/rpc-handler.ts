@@ -4,10 +4,12 @@ import { z } from "zod";
 import { assemblePrompt } from "./prompts/index.js";
 import { createModel } from "./providers/index.js";
 import {
+  ConfigSanitizer,
   type ConfigDiff,
   generateDiff,
   generateDiffFromConfigDocument,
   isPendingConfigChange,
+  type PendingConfigChange,
   type ValidationError,
   type ValidationResult,
   validateBeforeApply,
@@ -56,6 +58,8 @@ interface SanitizedConfigResponse {
 }
 
 const REDACTED_VALUE = "<redacted>";
+const PREVIEW_REDACTED_VALUE = "[REDACTED]";
+const PREVIEW_SERVER_PREFIX = "SERVER_";
 
 export interface JsonRpcError {
   code: number;
@@ -154,13 +158,18 @@ function normalizeConfigKey(key: string): string {
 
 function isSensitiveConfigKey(key: string): boolean {
   return [
+    "server",
     "password",
     "passwd",
     "secret",
     "token",
     "uuid",
+    "key",
     "apikey",
     "privatekey",
+    "publickey",
+    "presharedkey",
+    "obfspassword",
     "auth",
     "authstr",
     "authorization",
@@ -195,6 +204,87 @@ function isSanitizedConfigResponse(value: unknown): value is SanitizedConfigResp
   );
 }
 
+function sanitizePreviewSensitiveValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizePreviewSensitiveValue(item));
+  }
+
+  if (isObjectRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entryValue]) => [
+        key,
+        isSensitiveConfigKey(key)
+          ? PREVIEW_REDACTED_VALUE
+          : sanitizePreviewSensitiveValue(entryValue),
+      ]),
+    );
+  }
+
+  return value;
+}
+
+function sanitizePreviewConfigDocument(
+  config: Record<string, unknown>,
+): {
+  config: Record<string, unknown>;
+  nextServerCounter: number;
+} {
+  const sanitizedConfig = sanitizePreviewSensitiveValue(
+    structuredClone(config),
+  );
+  if (!isObjectRecord(sanitizedConfig)) {
+    throw new Error("sanitized config response is invalid");
+  }
+
+  let serverCounter = 0;
+  const proxies = sanitizedConfig.proxies;
+  if (Array.isArray(proxies)) {
+    sanitizedConfig.proxies = proxies.map((proxyValue) => {
+      if (!isObjectRecord(proxyValue)) {
+        return proxyValue;
+      }
+
+      if (typeof proxyValue.server === "string") {
+        serverCounter += 1;
+        proxyValue.server = `${PREVIEW_SERVER_PREFIX}${serverCounter}`;
+      }
+
+      return proxyValue;
+    });
+  }
+
+  return {
+    config: sanitizedConfig,
+    nextServerCounter: serverCounter,
+  };
+}
+
+function sanitizePendingConfigChangesForPreview(
+  toolResults: readonly PendingConfigChange[],
+  initialServerCounter: number,
+): PendingConfigChange[] {
+  let serverCounter = initialServerCounter;
+
+  return toolResults.map((toolResult) => {
+    const sanitizedChange = sanitizePreviewSensitiveValue(
+      structuredClone(toolResult),
+    ) as PendingConfigChange;
+
+    if (sanitizedChange.action !== "add_proxy") {
+      return sanitizedChange;
+    }
+
+    serverCounter += 1;
+    return {
+      ...sanitizedChange,
+      params: {
+        ...sanitizedChange.params,
+        server: `${PREVIEW_SERVER_PREFIX}${serverCounter}`,
+      },
+    };
+  });
+}
+
 function formatValidationError(issue: ValidationError): string {
   return issue.path.length === 0 ? issue.message : `${issue.path}: ${issue.message}`;
 }
@@ -205,16 +295,12 @@ function createValidationFailureError(validation: ValidationResult): Error {
 }
 
 async function buildPendingConfigPreview(
-  toolResults: Parameters<typeof generateDiffFromConfigDocument>[1],
+  toolResults: PendingConfigChange[],
 ): Promise<{
   diff: ConfigDiff;
   applyPayload: ConfigApplyPayload;
   validation: ValidationResult;
 }> {
-  const sanitizedToolResults =
-    redactSensitiveValue(structuredClone(toolResults)) as Parameters<
-      typeof generateDiffFromConfigDocument
-    >[1];
   const [configFileContent, sanitizedConfigResponse] = await Promise.all([
     requestFromRust<string>("read_active_config_file"),
     requestFromRust<SanitizedConfigResponse>("get_config_file"),
@@ -237,9 +323,14 @@ async function buildPendingConfigPreview(
     throw createValidationFailureError(applyValidation);
   }
 
+  const previewConfig = sanitizePreviewConfigDocument(sanitizedConfigResponse.config);
+  const previewToolResults = sanitizePendingConfigChangesForPreview(
+    toolResults,
+    previewConfig.nextServerCounter,
+  );
   const previewDiff = generateDiffFromConfigDocument(
-    sanitizedConfigResponse.config,
-    sanitizedToolResults,
+    previewConfig.config,
+    previewToolResults,
   );
 
   return {
@@ -260,7 +351,18 @@ registerHandler("chat", async (params, context) => {
   }
 
   const chatParams: ChatParams = parsedParams.data;
-  const prompt = assemblePrompt(chatParams.messages, chatParams.context);
+  const sanitizer = new ConfigSanitizer();
+  let sanitizedContext = chatParams.context;
+
+  if (chatParams.context?.currentConfig !== undefined) {
+    const sanitizedResult = sanitizer.sanitize(chatParams.context.currentConfig);
+    sanitizedContext = {
+      ...chatParams.context,
+      currentConfig: sanitizedResult.sanitized,
+    };
+  }
+
+  const prompt = assemblePrompt(chatParams.messages, sanitizedContext);
   const result = streamText({
     model: createModel(chatParams.settings),
     system: prompt.system,
@@ -275,7 +377,7 @@ registerHandler("chat", async (params, context) => {
   try {
     const pendingConfigChanges: Array<{
       toolCallId: string;
-      change: Parameters<typeof generateDiffFromConfigDocument>[1][number];
+      change: PendingConfigChange;
     }> = [];
     let confirmationBatchId: string | null = null;
     for await (const chunk of result.fullStream) {

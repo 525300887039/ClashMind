@@ -177,7 +177,7 @@ const pendingConfigChangeSchema = z.discriminatedUnion("action", [
     .strict(),
 ]);
 
-type PendingConfigChange = z.infer<typeof pendingConfigChangeSchema>;
+export type PendingConfigChange = z.infer<typeof pendingConfigChangeSchema>;
 type ConfigDocument = Record<string, unknown>;
 type DiffOpType = "context" | "add" | "remove";
 
@@ -194,6 +194,9 @@ interface AnnotatedDiffLine {
 }
 
 const DIFF_CONTEXT_LINES = 3;
+const PLACEHOLDER_WARNING =
+  "注意：配置中仍包含占位符，请在确认前填写实际 server 或认证信息。";
+const PLACEHOLDER_PATTERN = /\bSERVER_\d+\b|\[REDACTED\]/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -775,6 +778,23 @@ function buildSummary(changes: DiffChange[]): string {
   return `本次将${countSegments.join("，")}：${highlights}${changes.length > 3 ? `；共 ${changes.length} 项变更` : ""}`;
 }
 
+function appendPlaceholderWarning(summary: string, unifiedDiff: string): string {
+  const hasPlaceholderInAddedLines = unifiedDiff
+    .split("\n")
+    .some(
+      (line) =>
+        line.startsWith("+") &&
+        !line.startsWith("+++") &&
+        PLACEHOLDER_PATTERN.test(line),
+    );
+
+  if (!hasPlaceholderInAddedLines || summary.includes(PLACEHOLDER_WARNING)) {
+    return summary;
+  }
+
+  return `${summary}\n${PLACEHOLDER_WARNING}`;
+}
+
 export function isPendingConfigChange(value: unknown): value is PendingConfigChange {
   return pendingConfigChangeSchema.safeParse(value).success;
 }
@@ -800,12 +820,14 @@ export function generateDiffFromConfigDocument(
 
   const original = dumpYamlDocument(originalDocument);
   const modified = dumpYamlDocument(document);
+  const unifiedDiff = buildUnifiedDiff(original, modified);
+  const summary = appendPlaceholderWarning(buildSummary(changes), unifiedDiff);
 
   return {
     original: normalizeYamlText(original),
     modified: normalizeYamlText(modified),
-    unifiedDiff: buildUnifiedDiff(original, modified),
-    summary: buildSummary(changes),
+    unifiedDiff,
+    summary,
     changes,
   };
 }
