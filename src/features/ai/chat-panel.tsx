@@ -28,6 +28,9 @@ const CAPABILITY_CARDS = [
 export function ChatPanel() {
   const { messages, isLoading, error, sendMessage, clearMessages } = useAiChat();
   const setCurrentPage = useAppStore((state) => state.setCurrentPage);
+  const aiProvider = useAppStore((state) => state.aiProvider);
+  const aiModel = useAppStore((state) => state.aiModel);
+  const aiApiKey = useAppStore((state) => state.aiApiKey);
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -44,6 +47,11 @@ export function ChatPanel() {
   }, [messages]);
 
   const hasMessages = messages.length > 0;
+  const isConfigured =
+    aiProvider === "ollama"
+      ? aiModel.trim().length > 0
+      : aiModel.trim().length > 0 && aiApiKey.trim().length > 0;
+  const modelBadgeLabel = isConfigured ? `${aiProvider} / ${aiModel}` : "未配置 AI";
 
   return (
     <motion.section
@@ -74,7 +82,7 @@ export function ChatPanel() {
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/70 px-3 py-2 text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">
               <Bot className="size-3.5 text-primary" />
-              默认模型 OpenAI / gpt-4o-mini
+              {modelBadgeLabel}
             </span>
 
             <button
@@ -164,7 +172,19 @@ export function ChatPanel() {
               </div>
             ) : null}
 
-            <ChatInput isLoading={isLoading} showPresets={!hasMessages} onSubmit={sendMessage} />
+            {!isConfigured ? (
+              <div className="mb-3 rounded-[1.25rem] border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-sm text-amber-200">
+                AI 尚未配置。请先前往设置页填写 Provider、模型和凭据，再开始对话。
+              </div>
+            ) : null}
+
+            <ChatInput
+              isLoading={isLoading}
+              disabled={!isConfigured}
+              disabledHint={!isConfigured ? "未配置 AI" : undefined}
+              showPresets={!hasMessages}
+              onSubmit={sendMessage}
+            />
           </div>
         </div>
 

@@ -12,11 +12,19 @@ const MAX_TEXTAREA_HEIGHT = 220;
 
 interface ChatInputProps {
   isLoading: boolean;
+  disabled?: boolean;
+  disabledHint?: string;
   showPresets: boolean;
   onSubmit: (message: string) => void;
 }
 
-export function ChatInput({ isLoading, showPresets, onSubmit }: ChatInputProps) {
+export function ChatInput({
+  isLoading,
+  disabled = false,
+  disabledHint,
+  showPresets,
+  onSubmit,
+}: ChatInputProps) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -34,7 +42,7 @@ export function ChatInput({ isLoading, showPresets, onSubmit }: ChatInputProps) 
 
   const submit = () => {
     const nextValue = value.trim();
-    if (!nextValue || isLoading) {
+    if (!nextValue || isLoading || disabled) {
       return;
     }
 
@@ -59,7 +67,7 @@ export function ChatInput({ isLoading, showPresets, onSubmit }: ChatInputProps) 
   };
 
   const handlePresetClick = (question: string) => {
-    if (isLoading) {
+    if (isLoading || disabled) {
       return;
     }
 
@@ -76,7 +84,7 @@ export function ChatInput({ isLoading, showPresets, onSubmit }: ChatInputProps) 
               key={question}
               type="button"
               onClick={() => handlePresetClick(question)}
-              disabled={isLoading}
+              disabled={isLoading || disabled}
               className={cn(
                 "group inline-flex items-center gap-2 rounded-full border px-3 py-2 text-left text-sm transition-all",
                 "border-border/70 bg-muted/30 text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-foreground",
@@ -100,9 +108,10 @@ export function ChatInput({ isLoading, showPresets, onSubmit }: ChatInputProps) 
             value={value}
             onChange={(event) => setValue(event.target.value)}
             onKeyDown={handleKeyDown}
+            disabled={disabled}
             rows={1}
-            placeholder="描述你想调整的规则、诊断目标或统计问题..."
-            className="min-h-[88px] w-full resize-none bg-transparent px-5 py-4 text-sm leading-7 text-foreground outline-none placeholder:text-muted-foreground"
+            placeholder={disabled ? "请先在设置页完成 AI 配置..." : "描述你想调整的规则、诊断目标或统计问题..."}
+            className="min-h-[88px] w-full resize-none bg-transparent px-5 py-4 text-sm leading-7 text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60"
           />
 
           <div className="flex items-center justify-between gap-3 border-t border-border/70 px-4 py-3">
@@ -116,11 +125,12 @@ export function ChatInput({ isLoading, showPresets, onSubmit }: ChatInputProps) 
                 Enter 发送
               </span>
               <span>Shift + Enter 换行</span>
+              {disabledHint ? <span className="text-destructive/90 normal-case tracking-normal">{disabledHint}</span> : null}
             </div>
 
             <button
               type="submit"
-              disabled={isLoading || value.trim().length === 0}
+              disabled={disabled || isLoading || value.trim().length === 0}
               className={cn(
                 "inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-all",
                 "bg-primary text-primary-foreground shadow-[0_16px_40px_-24px_var(--color-primary)]",

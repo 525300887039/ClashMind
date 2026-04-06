@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { AiProviderKind } from "@/lib/tauri-api";
 import {
   MIHOMO_DEFAULT_ADDRESS,
   DEFAULT_CONFIG_DIR,
@@ -28,6 +29,11 @@ interface AppState {
   apiSecret: string;
   httpPort: number;
   socksPort: number;
+  aiProvider: AiProviderKind;
+  aiModel: string;
+  aiApiKey: string;
+  aiBaseUrl: string;
+  aiTemperature: number;
   autoStart: boolean;
   language: "zh-CN" | "en-US";
   setTheme: (theme: Theme) => void;
@@ -42,6 +48,11 @@ interface AppState {
         | "apiSecret"
         | "httpPort"
         | "socksPort"
+        | "aiProvider"
+        | "aiModel"
+        | "aiApiKey"
+        | "aiBaseUrl"
+        | "aiTemperature"
         | "autoStart"
         | "language"
       >
@@ -60,6 +71,11 @@ export const useAppStore = create<AppState>()(
       apiSecret: "",
       httpPort: DEFAULT_HTTP_PORT,
       socksPort: DEFAULT_SOCKS_PORT,
+      aiProvider: "openai",
+      aiModel: "gpt-4o-mini",
+      aiApiKey: "",
+      aiBaseUrl: "",
+      aiTemperature: 0.3,
       autoStart: false,
       language: "zh-CN",
       setTheme: (theme) => set({ theme }),
@@ -79,6 +95,11 @@ export const useAppStore = create<AppState>()(
         apiSecret: state.apiSecret,
         httpPort: state.httpPort,
         socksPort: state.socksPort,
+        aiProvider: state.aiProvider,
+        aiModel: state.aiModel,
+        aiApiKey: state.aiApiKey,
+        aiBaseUrl: state.aiBaseUrl,
+        aiTemperature: state.aiTemperature,
         autoStart: state.autoStart,
         language: state.language,
       }),

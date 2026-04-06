@@ -8,13 +8,8 @@ import {
   type AiProviderSettings,
   type AiStreamEvent,
 } from "@/lib/tauri-api";
+import { useAppStore } from "@/stores/app-store";
 import { useAiStore, type AiMessage } from "@/stores/ai-store";
-
-const DEFAULT_CHAT_SETTINGS: AiProviderSettings = {
-  provider: "openai",
-  model: "gpt-4o-mini",
-  temperature: 0.3,
-};
 
 const AI_STREAM_LISTENER_KEY = "__clashmind_ai_stream_listener__" as const;
 
@@ -36,6 +31,51 @@ function buildConversation(messages: AiMessage[], nextUserInput: string): AiChat
       })),
     { role: "user", content: nextUserInput },
   ];
+}
+
+function providerRequiresApiKey(provider: AiProviderSettings["provider"]) {
+  return provider !== "ollama";
+}
+
+function getChatSettings() {
+  const {
+    aiProvider,
+    aiModel,
+    aiApiKey,
+    aiBaseUrl,
+    aiTemperature,
+  } = useAppStore.getState();
+
+  const model = aiModel.trim();
+  const apiKey = aiApiKey.trim();
+  const baseUrl = aiBaseUrl.trim();
+
+  if (!model) {
+    return {
+      ok: false as const,
+      message: "请先在设置页配置 AI 模型。",
+    };
+  }
+
+  if (providerRequiresApiKey(aiProvider) && !apiKey) {
+    return {
+      ok: false as const,
+      message: "请先在设置页配置 AI Provider 和 API Key。",
+    };
+  }
+
+  const settings: AiProviderSettings = {
+    provider: aiProvider,
+    model,
+    temperature: Number.isFinite(aiTemperature) ? aiTemperature : 0.3,
+    ...(apiKey ? { apiKey } : {}),
+    ...(baseUrl ? { baseUrl } : {}),
+  };
+
+  return {
+    ok: true as const,
+    settings,
+  };
 }
 
 function handleStreamEvent(event: AiStreamEvent) {
@@ -97,8 +137,13 @@ function ensureAiStreamListener() {
   if (registry[AI_STREAM_LISTENER_KEY] === undefined) {
     registry[AI_STREAM_LISTENER_KEY] = listen<AiStreamEvent>("ai-stream", (event) => {
       handleStreamEvent(event.payload);
+    }).catch((error: unknown) => {
+      delete registry[AI_STREAM_LISTENER_KEY];
+      throw normalizeError(error);
     });
   }
+
+  return registry[AI_STREAM_LISTENER_KEY];
 }
 
 async function ensureAiServiceRunning() {
@@ -115,7 +160,9 @@ export function useAiChat() {
   const clearMessages = useAiStore((state) => state.clearMessages);
 
   useEffect(() => {
-    ensureAiStreamListener();
+    void ensureAiStreamListener().catch((error) => {
+      useAiStore.getState().setError(normalizeError(error).message);
+    });
   }, []);
 
   const sendMessageMutation = useMutation<void, Error, string>({
@@ -127,9 +174,16 @@ export function useAiChat() {
 
       const store = useAiStore.getState();
       const conversation = buildConversation(store.messages, content);
+      const settingsResult = getChatSettings();
+
+      if (!settingsResult.ok) {
+        const settingsError = new Error(settingsResult.message);
+        store.setError(settingsError.message);
+        throw settingsError;
+      }
 
       store.setError(null);
-      store.addMessage({ role: "user", content });
+      const userMessageId = store.addMessage({ role: "user", content });
 
       const assistantMessageId = store.addMessage({
         role: "assistant",
@@ -143,12 +197,14 @@ export function useAiChat() {
       try {
         const params: AiChatParams = {
           messages: conversation,
-          settings: DEFAULT_CHAT_SETTINGS,
+          settings: settingsResult.settings,
         };
 
+        await ensureAiStreamListener();
         await ensureAiServiceRunning();
         await api.ai.chat(params);
       } catch (error) {
+        store.removeMessage(userMessageId);
         store.removeMessage(assistantMessageId);
         store.setActiveStreamMessageId(null);
         store.setLoading(false);

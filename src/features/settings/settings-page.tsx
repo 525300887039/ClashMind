@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Save, RotateCw } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { useAppStore, type Theme } from "@/stores/app-store";
+import type { AiProviderKind } from "@/lib/tauri-api";
 import { api } from "@/lib/tauri-api";
 import { cn } from "@/lib/utils";
 
@@ -12,6 +13,11 @@ export function SettingsPage() {
   const [apiAddress, setApiAddress] = useState(store.apiAddress);
   const [apiSecret, setApiSecret] = useState(store.apiSecret);
   const [httpPort, setHttpPort] = useState(store.httpPort);
+  const [aiProvider, setAiProvider] = useState<AiProviderKind>(store.aiProvider);
+  const [aiModel, setAiModel] = useState(store.aiModel);
+  const [aiApiKey, setAiApiKey] = useState(store.aiApiKey);
+  const [aiBaseUrl, setAiBaseUrl] = useState(store.aiBaseUrl);
+  const [aiTemperature, setAiTemperature] = useState(store.aiTemperature);
   const [theme, setTheme] = useState<Theme>(store.theme);
   const [saving, setSaving] = useState(false);
 
@@ -26,6 +32,11 @@ export function SettingsPage() {
         apiAddress,
         apiSecret,
         httpPort,
+        aiProvider,
+        aiModel,
+        aiApiKey,
+        aiBaseUrl,
+        aiTemperature,
       });
       store.setTheme(theme);
 
@@ -101,6 +112,65 @@ export function SettingsPage() {
               <option value="dark">深色</option>
             </select>
           </Row>
+
+          <SectionLabel label="AI 助手" />
+
+          <Row label="AI Provider">
+            <select
+              className={selectClass}
+              value={aiProvider}
+              onChange={(e) => setAiProvider(e.target.value as AiProviderKind)}
+            >
+              <option value="openai">OpenAI</option>
+              <option value="claude">Claude</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="ollama">Ollama</option>
+            </select>
+          </Row>
+
+          <Row label="AI 模型">
+            <input
+              type="text"
+              className={inputClass}
+              value={aiModel}
+              onChange={(e) => setAiModel(e.target.value)}
+              placeholder={aiProvider === "ollama" ? "qwen3:latest" : "gpt-4o-mini"}
+            />
+          </Row>
+
+          {aiProvider !== "ollama" ? (
+            <Row label="AI API Key">
+              <input
+                type="password"
+                className={inputClass}
+                value={aiApiKey}
+                onChange={(e) => setAiApiKey(e.target.value)}
+                placeholder="输入 API Key"
+              />
+            </Row>
+          ) : null}
+
+          <Row label="AI Base URL">
+            <input
+              type="text"
+              className={inputClass}
+              value={aiBaseUrl}
+              onChange={(e) => setAiBaseUrl(e.target.value)}
+              placeholder={aiProvider === "ollama" ? "http://localhost:11434/api" : "留空使用默认"}
+            />
+          </Row>
+
+          <Row label="AI 温度">
+            <input
+              type="number"
+              min={0}
+              max={1}
+              step={0.1}
+              className={inputClass}
+              value={aiTemperature}
+              onChange={(e) => setAiTemperature(Number(e.target.value))}
+            />
+          </Row>
         </div>
 
         <div className="mx-auto mt-6 max-w-2xl">
@@ -133,6 +203,16 @@ function Row({
     <div className="flex items-center justify-between py-4">
       <span className="text-sm font-medium">{label}</span>
       {children}
+    </div>
+  );
+}
+
+function SectionLabel({ label }: { label: string }) {
+  return (
+    <div className="pt-6">
+      <span className="text-xs font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+        {label}
+      </span>
     </div>
   );
 }
