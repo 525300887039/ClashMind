@@ -96,6 +96,17 @@ export interface AiProviderSettings {
   apiKey?: string;
   baseUrl?: string;
   temperature?: number;
+  maxTokens?: number;
+}
+
+export interface AiSettings {
+  provider: AiProviderKind;
+  model: string;
+  apiKey: string;
+  baseUrl: string;
+  temperature: number;
+  maxTokens: number;
+  autoStart: boolean;
 }
 
 export interface AiChatMessage {
@@ -118,6 +129,12 @@ export interface AiChatParams {
 export interface AiPingResponse {
   pong: boolean;
   timestamp: number;
+}
+
+export interface AiConnectionTestResult {
+  success: boolean;
+  latencyMs: number;
+  message: string;
 }
 
 export type ReportType = "daily" | "weekly";
@@ -307,6 +324,8 @@ export const api = {
     start: () => invoke("start_ai_service"),
     stop: () => invoke("stop_ai_service"),
     status: () => invoke<boolean>("get_ai_status"),
+    getSettings: () => invoke<AiSettings>("get_ai_settings"),
+    setSettings: (settings: AiSettings) => invoke("set_ai_settings", { settings }),
     chat: (params: AiChatParams) => invoke("ai_chat", { params }),
     generateReport: (
       type: ReportType,
@@ -319,6 +338,8 @@ export const api = {
         settings,
       }),
     ping: () => invoke<AiPingResponse>("ai_ping"),
+    testConnection: (settings: AiSettings) =>
+      invoke<AiConnectionTestResult>("test_ai_connection", { settings }),
     listSnapshots: (limit: number) =>
       invoke<ConfigSnapshot[]>("list_snapshots", { limit }),
     restoreSnapshot: (id: number) => invoke<void>("restore_snapshot", { id }),

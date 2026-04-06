@@ -6,6 +6,7 @@ import { ReportViewer } from "./report-viewer";
 import { ChatInput } from "./chat-input";
 import { ChatMessage } from "./chat-message";
 import { useAiChat } from "./hooks/use-ai-chat";
+import { isAiConfigured, useAiSettingsQuery } from "./hooks/use-ai-settings";
 import { SnapshotList } from "./snapshot-list";
 import { useAppStore } from "@/stores/app-store";
 import { cn } from "@/lib/utils";
@@ -31,9 +32,8 @@ const CAPABILITY_CARDS = [
 export function ChatPanel() {
   const { messages, isLoading, error, sendMessage, clearMessages } = useAiChat();
   const setCurrentPage = useAppStore((state) => state.setCurrentPage);
-  const aiProvider = useAppStore((state) => state.aiProvider);
-  const aiModel = useAppStore((state) => state.aiModel);
-  const aiApiKey = useAppStore((state) => state.aiApiKey);
+  const aiSettingsQuery = useAiSettingsQuery();
+  const aiSettings = aiSettingsQuery.data;
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -50,11 +50,12 @@ export function ChatPanel() {
   }, [messages]);
 
   const hasMessages = messages.length > 0;
-  const isConfigured =
-    aiProvider === "ollama"
-      ? aiModel.trim().length > 0
-      : aiModel.trim().length > 0 && aiApiKey.trim().length > 0;
-  const modelBadgeLabel = isConfigured ? `${aiProvider} / ${aiModel}` : "未配置 AI";
+  const isConfigured = isAiConfigured(aiSettings);
+  const modelBadgeLabel = isConfigured && aiSettings
+    ? `${aiSettings.provider} / ${aiSettings.model}`
+    : aiSettingsQuery.isLoading
+      ? "读取 AI 配置中"
+      : "未配置 AI";
 
   return (
     <motion.section

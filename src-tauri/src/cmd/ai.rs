@@ -1,9 +1,10 @@
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chrono::{Duration as ChronoDuration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_sql::DbPool;
 use thiserror::Error;
 
@@ -27,14 +28,30 @@ use super::MihomoState;
 const AI_SNAPSHOT_DESCRIPTION: &str = "AI 配置变更前自动备份";
 const DEFAULT_MANUAL_SNAPSHOT_DESCRIPTION: &str = "手动快照";
 const REPORT_RPC_TIMEOUT: Duration = Duration::from_secs(120);
+const AI_SETTINGS_FILE_NAME: &str = "ai-settings.json";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum AiProviderKind {
     Openai,
     Claude,
     Deepseek,
     Ollama,
+}
+
+impl AiProviderKind {
+    fn default_model(&self) -> &'static str {
+        match self {
+            Self::Openai => "gpt-4o-mini",
+            Self::Claude => "claude-sonnet-4-5",
+            Self::Deepseek => "deepseek-chat",
+            Self::Ollama => "llama3.1",
+        }
+    }
+
+    fn requires_api_key(&self) -> bool {
+        !matches!(self, Self::Ollama)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +80,89 @@ pub struct AiProviderSettings {
     pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub temperature: Option<f64>,
+    pub max_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSettings {
+    pub provider: AiProviderKind,
+    pub model: String,
+    pub api_key: String,
+    pub base_url: String,
+    pub temperature: f64,
+    pub max_tokens: u32,
+    pub auto_start: bool,
+}
+
+impl Default for AiSettings {
+    fn default() -> Self {
+        let provider = AiProviderKind::Openai;
+        Self {
+            model: provider.default_model().to_string(),
+            provider,
+            api_key: String::new(),
+            base_url: String::new(),
+            temperature: 0.3,
+            max_tokens: 4096,
+            auto_start: false,
+        }
+    }
+}
+
+impl AiSettings {
+    fn normalized(mut self) -> Self {
+        self.api_key = self.api_key.trim().to_string();
+        self.base_url = self.base_url.trim().to_string();
+        self.model = self.model.trim().to_string();
+        self.temperature = if self.temperature.is_finite() {
+            self.temperature.clamp(0.0, 1.0)
+        } else {
+            Self::default().temperature
+        };
+        self.max_tokens = self.max_tokens.max(1);
+
+        if self.model.is_empty() {
+            self.model = self.provider.default_model().to_string();
+        }
+
+        self
+    }
+
+    fn validate_for_provider_request(&self) -> Result<(), AiSettingsError> {
+        if self.model.trim().is_empty() {
+            return Err(AiSettingsError::InvalidSettings(
+                "AI 模型不能为空".to_string(),
+            ));
+        }
+
+        if self.provider.requires_api_key() && self.api_key.trim().is_empty() {
+            return Err(AiSettingsError::InvalidSettings(
+                "当前 Provider 需要 API Key".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn to_provider_settings(&self) -> AiProviderSettings {
+        AiProviderSettings {
+            provider: self.provider.clone(),
+            model: self.model.trim().to_string(),
+            api_key: (!self.api_key.trim().is_empty()).then(|| self.api_key.trim().to_string()),
+            base_url: (!self.base_url.trim().is_empty()).then(|| self.base_url.trim().to_string()),
+            temperature: Some(self.temperature),
+            max_tokens: Some(self.max_tokens),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiConnectionTestResult {
+    pub success: bool,
+    pub latency_ms: u64,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -260,6 +360,49 @@ pub enum AiReportError {
 }
 
 impl Serialize for AiReportError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum AiSettingsError {
+    #[error("解析应用数据目录失败: {0}")]
+    ResolveAppDataDir(String),
+    #[error("AI 设置文件不存在: {path}")]
+    NotFound { path: String },
+    #[error("创建 AI 设置目录失败: {path}: {source}")]
+    CreateDir {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("读取 AI 设置失败: {path}: {source}")]
+    ReadFile {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("写入 AI 设置失败: {path}: {source}")]
+    WriteFile {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("序列化 AI 设置失败: {0}")]
+    Serialize(String),
+    #[error("AI 设置无效: {0}")]
+    InvalidSettings(String),
+    #[error("解析连通性测试结果失败: {0}")]
+    InvalidConnectionTest(String),
+    #[error("{0}")]
+    Sidecar(#[from] AiSidecarError),
+}
+
+impl Serialize for AiSettingsError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -512,6 +655,65 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
     })
 }
 
+fn ai_settings_file_path(app: &AppHandle) -> Result<PathBuf, AiSettingsError> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join(AI_SETTINGS_FILE_NAME))
+        .map_err(|error| AiSettingsError::ResolveAppDataDir(error.to_string()))
+}
+
+async fn load_ai_settings(app: &AppHandle) -> Result<AiSettings, AiSettingsError> {
+    let settings_path = ai_settings_file_path(app)?;
+    let settings_content = match tokio::fs::read_to_string(&settings_path).await {
+        Ok(content) => content,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Err(AiSettingsError::NotFound {
+                path: settings_path.to_string_lossy().into_owned(),
+            });
+        }
+        Err(error) => {
+            return Err(AiSettingsError::ReadFile {
+                path: settings_path.to_string_lossy().into_owned(),
+                source: error,
+            });
+        }
+    };
+
+    match serde_json::from_str::<AiSettings>(&settings_content) {
+        Ok(settings) => Ok(settings.normalized()),
+        Err(error) => {
+            tracing::warn!(
+                "AI 设置文件解析失败，已回退到默认值: path={}, error={error}",
+                settings_path.display()
+            );
+            Ok(AiSettings::default())
+        }
+    }
+}
+
+async fn store_ai_settings(app: &AppHandle, settings: AiSettings) -> Result<(), AiSettingsError> {
+    let settings_path = ai_settings_file_path(app)?;
+
+    if let Some(parent) = settings_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|source| AiSettingsError::CreateDir {
+                path: parent.to_string_lossy().into_owned(),
+                source,
+            })?;
+    }
+
+    let payload = serde_json::to_vec_pretty(&settings)
+        .map_err(|error| AiSettingsError::Serialize(error.to_string()))?;
+
+    tokio::fs::write(&settings_path, payload)
+        .await
+        .map_err(|source| AiSettingsError::WriteFile {
+            path: settings_path.to_string_lossy().into_owned(),
+            source,
+        })
+}
+
 fn snapshot_file_path(config_file: &Path) -> String {
     config_file.to_string_lossy().into_owned()
 }
@@ -683,10 +885,49 @@ pub fn get_ai_status(state: tauri::State<'_, AiSidecarState>) -> Result<bool, Ai
 }
 
 #[tauri::command]
+pub async fn get_ai_settings(app: AppHandle) -> Result<AiSettings, AiSettingsError> {
+    load_ai_settings(&app).await
+}
+
+#[tauri::command]
+pub async fn set_ai_settings(
+    app: AppHandle,
+    settings: AiSettings,
+) -> Result<(), AiSettingsError> {
+    store_ai_settings(&app, settings.normalized()).await
+}
+
+#[tauri::command]
 pub async fn ai_ping(
     state: tauri::State<'_, AiSidecarState>,
 ) -> Result<serde_json::Value, AiSidecarError> {
     sidecar::send_rpc(&state, "ping", None).await
+}
+
+#[tauri::command]
+pub async fn test_ai_connection(
+    app: AppHandle,
+    state: tauri::State<'_, AiSidecarState>,
+    settings: AiSettings,
+) -> Result<AiConnectionTestResult, AiSettingsError> {
+    let settings = settings.normalized();
+    settings.validate_for_provider_request()?;
+
+    if !sidecar::is_ai_running(&state) {
+        sidecar::start_ai(&app, &state).await?;
+    }
+
+    let response = sidecar::send_rpc(
+        &state,
+        "test_connection",
+        Some(serde_json::json!({
+            "settings": settings.to_provider_settings(),
+        })),
+    )
+    .await?;
+
+    serde_json::from_value(response)
+        .map_err(|error| AiSettingsError::InvalidConnectionTest(error.to_string()))
 }
 
 #[tauri::command]
@@ -873,6 +1114,52 @@ pub async fn save_conversation_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ai_settings_default_matches_expected_defaults() {
+        let settings = AiSettings::default();
+
+        assert!(matches!(settings.provider, AiProviderKind::Openai));
+        assert_eq!(settings.model, "gpt-4o-mini");
+        assert_eq!(settings.api_key, "");
+        assert_eq!(settings.base_url, "");
+        assert_eq!(settings.temperature, 0.3);
+        assert_eq!(settings.max_tokens, 4096);
+        assert!(!settings.auto_start);
+    }
+
+    #[test]
+    fn ai_settings_normalized_clamps_temperature_and_fills_default_model() {
+        let settings = AiSettings {
+            provider: AiProviderKind::Claude,
+            model: "   ".to_string(),
+            api_key: "  test-key  ".to_string(),
+            base_url: "  https://example.com  ".to_string(),
+            temperature: 42.0,
+            max_tokens: 0,
+            auto_start: true,
+        }
+        .normalized();
+
+        assert_eq!(settings.model, "claude-sonnet-4-5");
+        assert_eq!(settings.api_key, "test-key");
+        assert_eq!(settings.base_url, "https://example.com");
+        assert_eq!(settings.temperature, 1.0);
+        assert_eq!(settings.max_tokens, 1);
+        assert!(settings.auto_start);
+    }
+
+    #[test]
+    fn ai_settings_to_provider_settings_preserves_max_tokens() {
+        let settings = AiSettings {
+            max_tokens: 2048,
+            ..AiSettings::default()
+        };
+
+        let provider_settings = settings.to_provider_settings();
+
+        assert_eq!(provider_settings.max_tokens, Some(2048));
+    }
 
     #[test]
     fn weekly_report_window_uses_selected_end_date_as_period_end() {

@@ -11,6 +11,7 @@ export const providerSettingsSchema = z
     apiKey: z.string().min(1).optional(),
     baseUrl: z.string().min(1).optional(),
     temperature: z.number().finite().optional(),
+    maxTokens: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -162,6 +163,24 @@ export const reportResultSchema = z
   .strict();
 
 export interface ReportResult extends z.infer<typeof reportResultSchema> {}
+
+export const connectionTestParamsSchema = z
+  .object({
+    settings: providerSettingsSchema,
+  })
+  .strict();
+
+export interface ConnectionTestParams extends z.infer<typeof connectionTestParamsSchema> {}
+
+export const connectionTestResultSchema = z
+  .object({
+    success: z.boolean(),
+    latencyMs: z.number().int().nonnegative(),
+    message: z.string().min(1),
+  })
+  .strict();
+
+export interface ConnectionTestResult extends z.infer<typeof connectionTestResultSchema> {}
 
 const textDeltaEventSchema = z
   .object({

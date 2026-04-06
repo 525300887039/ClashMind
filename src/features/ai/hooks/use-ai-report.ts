@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { api, type ReportResult, type ReportType } from "@/lib/tauri-api";
-import { resolveAiSettings } from "../ai-settings";
+import { resolveAiProviderSettings } from "./use-ai-settings";
 
 export interface GenerateReportInput {
   type: ReportType;
@@ -14,13 +14,10 @@ function normalizeError(error: unknown) {
 export function useAiReport() {
   return useMutation<ReportResult, Error, GenerateReportInput>({
     mutationFn: async ({ type, date }) => {
-      const settingsResult = resolveAiSettings();
-      if (!settingsResult.ok) {
-        throw new Error(settingsResult.message);
-      }
+      const settings = await resolveAiProviderSettings();
 
       try {
-        return await api.ai.generateReport(type, date, settingsResult.settings);
+        return await api.ai.generateReport(type, date, settings);
       } catch (error) {
         throw normalizeError(error);
       }

@@ -10,8 +10,11 @@ import {
   type SaveConversationMessageParams,
   isPendingConfigChangeResult,
 } from "@/lib/tauri-api";
-import { ensureAiServiceRunning, resolveAiSettings } from "../ai-settings";
-import { useAppStore } from "@/stores/app-store";
+import {
+  ensureAiServiceRunning,
+  getAiSettingsSnapshot,
+  resolveAiProviderSettings,
+} from "./use-ai-settings";
 import { useAiStore, type AiMessage } from "@/stores/ai-store";
 
 const AI_STREAM_LISTENER_KEY = "__clashmind_ai_stream_listener__" as const;
@@ -36,8 +39,9 @@ function buildConversation(messages: AiMessage[], nextUserInput: string): AiChat
   ];
 }
 
-function getPersistenceModel() {
-  const model = useAppStore.getState().aiModel.trim();
+async function getPersistenceModel() {
+  const settings = await getAiSettingsSnapshot();
+  const model = settings.model.trim();
   return model.length > 0 ? model : undefined;
 }
 
@@ -151,7 +155,7 @@ async function handleStreamEvent(event: AiStreamEvent) {
             toolCalls:
               assistantMessage.toolCalls.length > 0 ? assistantMessage.toolCalls : undefined,
             tokensUsed: event.tokensUsed,
-            model: getPersistenceModel(),
+            model: await getPersistenceModel(),
           });
         } catch (error) {
           useAiStore
@@ -214,13 +218,7 @@ export function useAiChat() {
 
       const store = useAiStore.getState();
       const conversation = buildConversation(store.messages, content);
-      const settingsResult = resolveAiSettings();
-
-      if (!settingsResult.ok) {
-        const settingsError = new Error(settingsResult.message);
-        store.setError(settingsError.message);
-        throw settingsError;
-      }
+      const settings = await resolveAiProviderSettings();
 
       store.setError(null);
       const userMessageId = store.addMessage({ role: "user", content });
@@ -237,7 +235,7 @@ export function useAiChat() {
       try {
         const params: AiChatParams = {
           messages: conversation,
-          settings: settingsResult.settings,
+          settings,
         };
 
         await ensureAiStreamListener();
@@ -246,7 +244,7 @@ export function useAiChat() {
         void persistConversationMessage({
           role: "user",
           content,
-          model: settingsResult.settings.model,
+          model: settings.model,
         }).catch((error: unknown) => {
           console.warn("[ClashMind] 保存用户对话历史失败:", normalizeError(error));
         });

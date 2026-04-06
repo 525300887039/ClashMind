@@ -19,6 +19,7 @@ import { allTools } from "./tools/index.js";
 import { handleRustCallbackResponse, requestFromRust } from "./tools/rust-rpc.js";
 import {
   chatParamsSchema,
+  connectionTestParamsSchema,
   type ChatParams,
   reportParamsSchema,
   reportStatsPayloadSchema,
@@ -372,6 +373,9 @@ registerHandler("chat", async (params, context) => {
     messages: prompt.messages,
     tools: allTools,
     stopWhen: stepCountIs(5),
+    ...(chatParams.settings.maxTokens === undefined
+      ? {}
+      : { maxOutputTokens: chatParams.settings.maxTokens }),
     ...(chatParams.settings.temperature === undefined
       ? {}
       : { temperature: chatParams.settings.temperature }),
@@ -470,6 +474,37 @@ registerHandler("chat", async (params, context) => {
   return HANDLED_EXTERNALLY;
 });
 
+registerHandler("test_connection", async (params) => {
+  const parsedParams = connectionTestParamsSchema.safeParse(params);
+
+  if (!parsedParams.success) {
+    throw new Error(parsedParams.error.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const startedAt = Date.now();
+
+  try {
+    await generateText({
+      model: createModel(parsedParams.data.settings),
+      prompt: "Reply with OK.",
+      maxOutputTokens: 8,
+      temperature: 0,
+    });
+
+    return {
+      success: true,
+      latencyMs: Date.now() - startedAt,
+      message: "Provider 已响应测试请求。",
+    };
+  } catch (error) {
+    return {
+      success: false,
+      latencyMs: Date.now() - startedAt,
+      message: getErrorMessage(error),
+    };
+  }
+});
+
 registerHandler("generate_report", async (params) => {
   const parsedParams = reportParamsSchema.safeParse(params);
 
@@ -494,6 +529,9 @@ registerHandler("generate_report", async (params) => {
   const { text } = await generateText({
     model: createModel(reportParams.settings),
     prompt,
+    ...(reportParams.settings.maxTokens === undefined
+      ? {}
+      : { maxOutputTokens: reportParams.settings.maxTokens }),
     temperature: reportParams.settings.temperature ?? 0.35,
   });
 

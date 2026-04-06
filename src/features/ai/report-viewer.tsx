@@ -14,6 +14,7 @@ import { useMemo, useState, useTransition } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useAiReport } from "./hooks/use-ai-report";
+import { isAiConfigured, useAiSettingsQuery } from "./hooks/use-ai-settings";
 import { markdownComponents } from "./markdown-components";
 import type { ReportResult, ReportType } from "@/lib/tauri-api";
 import { cn, formatBytes } from "@/lib/utils";
@@ -223,18 +224,13 @@ function EmptyPanel({
 
 export function ReportViewer() {
   const setCurrentPage = useAppStore((state) => state.setCurrentPage);
-  const aiProvider = useAppStore((state) => state.aiProvider);
-  const aiModel = useAppStore((state) => state.aiModel);
-  const aiApiKey = useAppStore((state) => state.aiApiKey);
+  const { data: aiSettings } = useAiSettingsQuery();
   const [reportType, setReportType] = useState<ReportType>("daily");
   const [selectedDate, setSelectedDate] = useState(getDefaultReportDate);
   const [isTransitionPending, startTransition] = useTransition();
   const reportMutation = useAiReport();
   const report = reportMutation.data;
-  const isConfigured =
-    aiProvider === "ollama"
-      ? aiModel.trim().length > 0
-      : aiModel.trim().length > 0 && aiApiKey.trim().length > 0;
+  const isConfigured = isAiConfigured(aiSettings);
   const resolvedHasData = hasMeaningfulData(report);
   const totalTraffic = report
     ? report.stats.totalTraffic.upload + report.stats.totalTraffic.download
@@ -308,7 +304,10 @@ export function ReportViewer() {
                 value={trailingGeneratedLabel(report?.generatedAt)}
                 emphasis
               />
-              <DataStrip label="模型" value={isConfigured ? aiModel : "未配置"} />
+              <DataStrip
+                label="模型"
+                value={isConfigured && aiSettings ? aiSettings.model : "未配置"}
+              />
             </div>
           </div>
 
