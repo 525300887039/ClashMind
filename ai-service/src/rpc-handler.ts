@@ -182,16 +182,16 @@ function isSensitiveConfigKey(key: string): boolean {
   ].includes(normalizeConfigKey(key));
 }
 
-function redactSensitiveValue<T>(value: T): T {
+function redactSensitiveValue<T>(value: T, replacement: string = REDACTED_VALUE): T {
   if (Array.isArray(value)) {
-    return value.map((item) => redactSensitiveValue(item)) as T;
+    return value.map((item) => redactSensitiveValue(item, replacement)) as T;
   }
 
   if (isObjectRecord(value)) {
     return Object.fromEntries(
       Object.entries(value).map(([key, entryValue]) => [
         key,
-        isSensitiveConfigKey(key) ? REDACTED_VALUE : redactSensitiveValue(entryValue),
+        isSensitiveConfigKey(key) ? replacement : redactSensitiveValue(entryValue, replacement),
       ]),
     ) as T;
   }
@@ -208,33 +208,15 @@ function isSanitizedConfigResponse(value: unknown): value is SanitizedConfigResp
   );
 }
 
-function sanitizePreviewSensitiveValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => sanitizePreviewSensitiveValue(item));
-  }
-
-  if (isObjectRecord(value)) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entryValue]) => [
-        key,
-        isSensitiveConfigKey(key)
-          ? PREVIEW_REDACTED_VALUE
-          : sanitizePreviewSensitiveValue(entryValue),
-      ]),
-    );
-  }
-
-  return value;
-}
-
 function sanitizePreviewConfigDocument(
   config: Record<string, unknown>,
 ): {
   config: Record<string, unknown>;
   nextServerCounter: number;
 } {
-  const sanitizedConfig = sanitizePreviewSensitiveValue(
-    structuredClone(config),
+  const sanitizedConfig = redactSensitiveValue(
+    config,
+    PREVIEW_REDACTED_VALUE,
   );
   if (!isObjectRecord(sanitizedConfig)) {
     throw new Error("sanitized config response is invalid");
@@ -270,8 +252,9 @@ function sanitizePendingConfigChangesForPreview(
   let serverCounter = initialServerCounter;
 
   return toolResults.map((toolResult) => {
-    const sanitizedChange = sanitizePreviewSensitiveValue(
-      structuredClone(toolResult),
+    const sanitizedChange = redactSensitiveValue(
+      toolResult,
+      PREVIEW_REDACTED_VALUE,
     ) as PendingConfigChange;
 
     if (sanitizedChange.action !== "add_proxy") {
@@ -419,7 +402,7 @@ registerHandler("chat", async (params, context) => {
 
             for (const pendingChange of pendingConfigChanges) {
               const sanitizedPendingChange = redactSensitiveValue(
-                structuredClone(pendingChange.change),
+                pendingChange.change,
               );
               context.writeResult({
                 type: "tool_result",

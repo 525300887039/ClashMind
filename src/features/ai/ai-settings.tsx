@@ -227,8 +227,11 @@ export function AiSettingsPanel() {
   const modelSelectValue = hasCustomModel ? CUSTOM_MODEL_VALUE : draft.model;
   const isConfigured = isAiConfigured(draft);
   const currentSettings = settingsQuery.data ?? DEFAULT_AI_SETTINGS;
-  const isDirty =
-    JSON.stringify(normalizeAiSettings(draft)) !== JSON.stringify(normalizeAiSettings(currentSettings));
+  const isDirty = useMemo(
+    () =>
+      JSON.stringify(normalizeAiSettings(draft)) !== JSON.stringify(normalizeAiSettings(currentSettings)),
+    [draft, currentSettings],
+  );
   const connectionResult = connectionTestMutation.data;
   const connectionError = connectionTestMutation.error;
   const connectionMessage = connectionError?.message ?? connectionResult?.message ?? "";

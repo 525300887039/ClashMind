@@ -7,9 +7,9 @@ import {
   type AiChatParams,
   type AiStreamEvent,
   type ConfigApplyPayload,
-  type SaveConversationMessageParams,
   isPendingConfigChangeResult,
 } from "@/lib/tauri-api";
+import { normalizeError } from "@/lib/error";
 import {
   ensureAiServiceRunning,
   getAiSettingsSnapshot,
@@ -22,10 +22,6 @@ const AI_STREAM_LISTENER_KEY = "__clashmind_ai_stream_listener__" as const;
 type GlobalAiListenerRegistry = typeof globalThis & {
   [AI_STREAM_LISTENER_KEY]?: Promise<UnlistenFn>;
 };
-
-function normalizeError(error: unknown) {
-  return error instanceof Error ? error : new Error(String(error));
-}
 
 function buildConversation(messages: AiMessage[], nextUserInput: string): AiChatMessage[] {
   return [
@@ -45,12 +41,8 @@ async function getPersistenceModel() {
   return model.length > 0 ? model : undefined;
 }
 
-async function persistConversationMessage(params: SaveConversationMessageParams) {
-  await api.ai.saveConversationMessage(params);
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isConfigApplyPayload(value: unknown): value is ConfigApplyPayload {
@@ -149,7 +141,7 @@ async function handleStreamEvent(event: AiStreamEvent) {
 
       if (assistantMessage !== null) {
         try {
-          await persistConversationMessage({
+          await api.ai.saveConversationMessage({
             role: assistantMessage.role,
             content: assistantMessage.content,
             toolCalls:
@@ -241,7 +233,7 @@ export function useAiChat() {
         await ensureAiStreamListener();
         await ensureAiServiceRunning();
         await api.ai.chat(params);
-        void persistConversationMessage({
+        void api.ai.saveConversationMessage({
           role: "user",
           content,
           model: settings.model,

@@ -130,13 +130,13 @@ impl AiSettings {
     }
 
     fn validate_for_provider_request(&self) -> Result<(), AiSettingsError> {
-        if self.model.trim().is_empty() {
+        if self.model.is_empty() {
             return Err(AiSettingsError::InvalidSettings(
                 "AI 模型不能为空".to_string(),
             ));
         }
 
-        if self.provider.requires_api_key() && self.api_key.trim().is_empty() {
+        if self.provider.requires_api_key() && self.api_key.is_empty() {
             return Err(AiSettingsError::InvalidSettings(
                 "当前 Provider 需要 API Key".to_string(),
             ));
@@ -148,9 +148,9 @@ impl AiSettings {
     fn to_provider_settings(&self) -> AiProviderSettings {
         AiProviderSettings {
             provider: self.provider.clone(),
-            model: self.model.trim().to_string(),
-            api_key: (!self.api_key.trim().is_empty()).then(|| self.api_key.trim().to_string()),
-            base_url: (!self.base_url.trim().is_empty()).then(|| self.base_url.trim().to_string()),
+            model: self.model.clone(),
+            api_key: (!self.api_key.is_empty()).then(|| self.api_key.clone()),
+            base_url: (!self.base_url.is_empty()).then(|| self.base_url.clone()),
             temperature: Some(self.temperature),
             max_tokens: Some(self.max_tokens),
         }
@@ -206,14 +206,7 @@ pub enum ReportType {
 }
 
 impl ReportType {
-    fn max_domain_count(&self) -> i32 {
-        match self {
-            Self::Daily => 5,
-            Self::Weekly => 10,
-        }
-    }
-
-    fn max_rule_count(&self) -> i32 {
+    fn max_top_n_count(&self) -> i32 {
         match self {
             Self::Daily => 5,
             Self::Weekly => 10,
@@ -552,30 +545,28 @@ pub(crate) async fn get_report_stats(
     let end_iso = format_utc_day_start(window.end_day_exclusive);
     let db = db::get_db_pool(app_handle).await?;
 
-    let current_overview =
-        repo_connection::get_overview_by_window(&db, &start_day, &end_day_exclusive).await?;
-    let previous_overview = repo_connection::get_overview_by_window(
-        &db,
-        &previous_start_day,
-        &previous_end_day_exclusive,
-    )
-    .await?;
-    let top_domains = repo_domain::query_top_domains_by_window(
-        &db,
-        &start_day,
-        &end_day_exclusive,
-        report_type.max_domain_count(),
-    )
-    .await?;
-    let top_rules = repo_connection::query_rule_stats_by_window(
-        &db,
-        &start_day,
-        &end_day_exclusive,
-        report_type.max_rule_count(),
-    )
-    .await?;
-    let rule_hit_summary =
-        repo_connection::summarize_rule_hits_by_window(&db, &start_day, &end_day_exclusive).await?;
+    let (current_overview, previous_overview, top_domains, top_rules, rule_hit_summary) =
+        tokio::try_join!(
+            repo_connection::get_overview_by_window(&db, &start_day, &end_day_exclusive),
+            repo_connection::get_overview_by_window(
+                &db,
+                &previous_start_day,
+                &previous_end_day_exclusive,
+            ),
+            repo_domain::query_top_domains_by_window(
+                &db,
+                &start_day,
+                &end_day_exclusive,
+                report_type.max_top_n_count(),
+            ),
+            repo_connection::query_rule_stats_by_window(
+                &db,
+                &start_day,
+                &end_day_exclusive,
+                report_type.max_top_n_count(),
+            ),
+            repo_connection::summarize_rule_hits_by_window(&db, &start_day, &end_day_exclusive),
+        )?;
 
     let peak_hour = if report_type == ReportType::Daily {
         let hourly_points = repo_traffic::query_hourly(&db, &start_iso, &end_iso).await?;

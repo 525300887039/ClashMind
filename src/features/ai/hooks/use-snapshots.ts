@@ -1,15 +1,12 @@
 import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/tauri-api";
+import { normalizeErrorMessage } from "@/lib/error";
 
 const SNAPSHOT_KEYS = {
   all: ["snapshots"] as const,
   list: (limit: number) => ["snapshots", limit] as const,
 };
-
-function normalizeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 async function invalidateSnapshotRelatedQueries(queryClient: QueryClient) {
   await Promise.all([
@@ -38,7 +35,7 @@ export function useCreateSnapshot() {
       toast.success("配置快照已创建");
     },
     onError: (error) => {
-      toast.error(`创建快照失败: ${normalizeError(error)}`);
+      toast.error(`创建快照失败: ${normalizeErrorMessage(error)}`);
     },
   });
 }
@@ -53,7 +50,7 @@ export function useRestoreSnapshot() {
       toast.success("已恢复到所选快照并完成热重载");
     },
     onError: (error) => {
-      toast.error(`恢复快照失败: ${normalizeError(error)}`);
+      toast.error(`恢复快照失败: ${normalizeErrorMessage(error)}`);
     },
   });
 }

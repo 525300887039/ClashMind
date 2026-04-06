@@ -6,6 +6,7 @@ import {
   type AiProviderSettings,
   type AiSettings,
 } from "@/lib/tauri-api";
+import { normalizeError } from "@/lib/error";
 import { queryClient } from "@/lib/query-client";
 
 const AI_SETTINGS_QUERY_KEY = ["ai-settings"] as const;
@@ -48,12 +49,8 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
 
 let legacyAiSettingsMigrationPromise: Promise<AiSettings | null> | null = null;
 
-function normalizeError(error: unknown) {
-  return error instanceof Error ? error : new Error(String(error));
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isAiProviderKind(value: unknown): value is AiProviderKind {
@@ -269,7 +266,7 @@ async function fetchAiSettings() {
 export async function getAiSettingsSnapshot() {
   const cached = queryClient.getQueryData<AiSettings>(AI_SETTINGS_QUERY_KEY);
   if (cached) {
-    return normalizeAiSettings(cached);
+    return cached;
   }
 
   return queryClient.fetchQuery({
@@ -300,12 +297,14 @@ export function useAiSettingsQuery() {
 export function useSaveAiSettingsMutation() {
   const qc = useQueryClient();
 
-  return useMutation<void, Error, AiSettings>({
+  return useMutation<AiSettings, Error, AiSettings>({
     mutationFn: async (settings) => {
-      await api.ai.setSettings(normalizeAiSettings(settings));
+      const normalized = normalizeAiSettings(settings);
+      await api.ai.setSettings(normalized);
+      return normalized;
     },
-    onSuccess: async (_data, settings) => {
-      qc.setQueryData(AI_SETTINGS_QUERY_KEY, normalizeAiSettings(settings));
+    onSuccess: async (normalized) => {
+      qc.setQueryData(AI_SETTINGS_QUERY_KEY, normalized);
       await qc.invalidateQueries({ queryKey: AI_SETTINGS_QUERY_KEY });
     },
   });

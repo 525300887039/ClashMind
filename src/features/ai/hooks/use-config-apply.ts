@@ -1,11 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/tauri-api";
+import { normalizeErrorMessage } from "@/lib/error";
 import { useAiStore } from "@/stores/ai-store";
-
-function normalizeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 export function useConfigApply(toolCallId: string, confirmationBatchId?: string) {
   const queryClient = useQueryClient();
@@ -49,7 +46,7 @@ export function useConfigApply(toolCallId: string, confirmationBatchId?: string)
       toast.success("配置已写入并完成热重载");
     },
     onError: (error) => {
-      toast.error(`应用配置失败: ${normalizeError(error)}`);
+      toast.error(`应用配置失败: ${normalizeErrorMessage(error)}`);
     },
   });
 
@@ -67,7 +64,7 @@ export function useConfigApply(toolCallId: string, confirmationBatchId?: string)
       toast.success("已丢弃本次配置变更");
     },
     onError: (error) => {
-      toast.error(`取消配置变更失败: ${normalizeError(error)}`);
+      toast.error(`取消配置变更失败: ${normalizeErrorMessage(error)}`);
     },
   });
 
