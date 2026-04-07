@@ -277,7 +277,9 @@ export function createModel(settings: ProviderSettings): LanguageModel {
         baseURL: baseUrl,
       });
 
-      return compatible(settings.model);
+      // Most "OpenAI Compatible" gateways only implement chat completions,
+      // while the SDK default model now targets the Responses API.
+      return compatible.chat(settings.model);
     }
     case "claude": {
       const anthropic = createAnthropic({
