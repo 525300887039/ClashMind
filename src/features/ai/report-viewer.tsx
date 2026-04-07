@@ -108,7 +108,7 @@ function MetricCard({
   icon: typeof Gauge;
 }) {
   return (
-    <article className="rounded-[1.3rem] border border-border/70 bg-background/70 p-4 shadow-[0_20px_60px_-44px_rgba(15,23,42,0.65)]">
+    <article className="rounded-xl border border-border/70 bg-background/70 p-4 shadow-[0_20px_60px_-44px_rgba(15,23,42,0.65)]">
       <div className="flex items-center justify-between gap-3">
         <span className="text-[11px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
           {label}
@@ -157,7 +157,7 @@ function RankedList({
   emptyLabel: string;
 }) {
   return (
-    <section className="rounded-[1.35rem] border border-border/70 bg-background/65 p-4">
+    <section className="rounded-xl border border-border/70 bg-background/65 p-4">
       <div className="text-[11px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
         {title}
       </div>
@@ -195,10 +195,10 @@ function EmptyPanel({
   onOpenSettings: () => void;
 }) {
   return (
-    <div className="relative overflow-hidden rounded-[1.8rem] border border-dashed border-border/70 bg-muted/10 px-6 py-10 text-center">
+    <div className="relative overflow-hidden rounded-[1.6rem] border border-dashed border-border/70 bg-muted/10 px-6 py-10 text-center">
       <div className="pointer-events-none absolute inset-x-10 top-0 h-24 bg-linear-to-r from-transparent via-primary/12 to-transparent blur-2xl" />
       <div className="relative mx-auto max-w-sm">
-        <div className="mx-auto inline-flex size-14 items-center justify-center rounded-[1.35rem] border border-primary/20 bg-primary/10 text-primary shadow-[0_18px_50px_-32px_var(--color-primary)]">
+        <div className="mx-auto inline-flex size-14 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 text-primary shadow-[0_18px_50px_-32px_var(--color-primary)]">
           <FileText className="size-6" />
         </div>
         <h3 className="mt-5 text-xl font-semibold tracking-tight text-foreground">
@@ -312,7 +312,7 @@ export function ReportViewer() {
           </div>
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_12rem_auto]">
-            <div className="rounded-[1.4rem] border border-border/70 bg-background/70 p-3">
+            <div className="rounded-xl border border-border/70 bg-background/70 p-3">
               <div className="text-[11px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
                 报告类型
               </div>
@@ -347,7 +347,7 @@ export function ReportViewer() {
               </div>
             </div>
 
-            <label className="rounded-[1.4rem] border border-border/70 bg-background/70 p-3">
+            <label className="rounded-xl border border-border/70 bg-background/70 p-3">
               <div className="text-[11px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
                 {reportType === "daily" ? "报告日期" : "结束日期"}
               </div>
@@ -367,7 +367,7 @@ export function ReportViewer() {
               onClick={handleGenerate}
               disabled={!isConfigured || reportMutation.isPending}
               className={cn(
-                "inline-flex items-center justify-center gap-2 rounded-[1.4rem] border px-4 py-3 text-sm font-medium transition-all",
+                "inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium transition-all",
                 "border-primary/20 bg-primary text-primary-foreground shadow-[0_20px_48px_-28px_var(--color-primary)] hover:translate-y-[-1px] hover:bg-primary/92",
                 "disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0",
               )}
@@ -384,7 +384,7 @@ export function ReportViewer() {
 
         <div className="mt-5 space-y-4">
           {reportMutation.error ? (
-            <div className="rounded-[1.3rem] border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+            <div className="rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
               {reportMutation.error.message}
             </div>
           ) : null}
@@ -441,13 +441,13 @@ export function ReportViewer() {
               </div>
 
               {!resolvedHasData ? (
-                <div className="rounded-[1.3rem] border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-sm leading-6 text-amber-200">
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-sm leading-6 text-amber-600 dark:text-amber-200">
                   当前时间窗口内没有足够的统计样本。报告会保留结构，但重点会转为说明数据缺口，而不是推断不存在的行为。
                 </div>
               ) : null}
 
               <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.1fr)_minmax(16rem,0.9fr)]">
-                <article className="overflow-hidden rounded-[1.7rem] border border-border/70 bg-background/85 shadow-[0_24px_80px_-42px_rgba(15,23,42,0.58)]">
+                <article className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/85 shadow-[0_24px_80px_-42px_rgba(15,23,42,0.58)]">
                   <div className="border-b border-border/70 px-5 py-4">
                     <div className="text-[11px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
                       Markdown Report
