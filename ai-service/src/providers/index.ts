@@ -9,6 +9,7 @@ import type {
   ProviderId,
   ProviderSettings,
 } from "../types.js";
+import { getErrorMessage, isRecord } from "../utils.js";
 
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com";
@@ -51,13 +52,6 @@ function buildUrl(
   return url;
 }
 
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "unknown error";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function uniqueModelIds(models: Iterable<string>): string[] {
   return [...new Set(

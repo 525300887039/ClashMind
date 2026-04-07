@@ -24,7 +24,6 @@ import { toast } from "sonner";
 import type { AiModelCatalogSource, AiProviderKind, AiSettings as AiSettingsValue } from "@/lib/tauri-api";
 import { cn } from "@/lib/utils";
 import {
-  canFetchProviderModels,
   DEFAULT_AI_SETTINGS,
   getModelCatalogBlockingReason,
   getDefaultModel,
@@ -297,8 +296,8 @@ export function AiSettingsPanel() {
   const modelSelectValue = hasCustomModel ? CUSTOM_MODEL_VALUE : draft.model;
   const isConfigured = isAiConfigured(draft);
   const currentSettings = settingsQuery.data ?? DEFAULT_AI_SETTINGS;
-  const canRefreshModels = canFetchProviderModels(draft);
   const modelCatalogBlockingReason = getModelCatalogBlockingReason(draft);
+  const canRefreshModels = modelCatalogBlockingReason === null;
   const modelCatalogMessage =
     modelCatalogBlockingReason ??
     modelCatalogQuery.error?.message ??

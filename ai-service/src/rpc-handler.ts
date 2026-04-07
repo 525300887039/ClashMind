@@ -16,6 +16,7 @@ import {
   validateBeforeApply,
 } from "./safety/index.js";
 import { allTools } from "./tools/index.js";
+import { getErrorMessage } from "./utils.js";
 import { handleRustCallbackResponse, requestFromRust } from "./tools/rust-rpc.js";
 import {
   chatParamsSchema,
@@ -144,10 +145,6 @@ function createHandlerContext(id: JsonRpcId | null): JsonRpcHandlerContext {
       writeResponse(createSuccessResponse(id, result));
     },
   };
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Internal error";
 }
 
 function normalizeToolInput(input: unknown): Record<string, unknown> {
