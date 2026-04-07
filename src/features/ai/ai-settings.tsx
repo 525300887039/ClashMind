@@ -14,22 +14,26 @@ import {
   Orbit,
   Play,
   PlugZap,
+  RefreshCw,
   Save,
   ServerCog,
   Square,
   TestTubeDiagonal,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { AiProviderKind, AiSettings as AiSettingsValue } from "@/lib/tauri-api";
+import type { AiModelCatalogSource, AiProviderKind, AiSettings as AiSettingsValue } from "@/lib/tauri-api";
 import { cn } from "@/lib/utils";
 import {
+  canFetchProviderModels,
   DEFAULT_AI_SETTINGS,
-  OLLAMA_DEFAULT_BASE_URL,
+  getModelCatalogBlockingReason,
   getDefaultModel,
   getProviderModels,
   isAiConfigured,
   normalizeAiSettings,
   providerRequiresApiKey,
+  providerRequiresBaseUrl,
+  useAiModelCatalogQuery,
   useAiConnectionTestMutation,
   useAiServiceControls,
   useAiSettingsQuery,
@@ -38,9 +42,9 @@ import {
 
 const PROVIDER_OPTIONS: Array<{ value: AiProviderKind; label: string; eyebrow: string }> = [
   { value: "openai", label: "OpenAI", eyebrow: "GPT 系列" },
+  { value: "openai_compatible", label: "OpenAI Compatible", eyebrow: "DeepSeek / Ollama / 第三方兼容" },
   { value: "claude", label: "Claude", eyebrow: "Anthropic" },
-  { value: "deepseek", label: "DeepSeek", eyebrow: "推理 / 对话" },
-  { value: "ollama", label: "Ollama", eyebrow: "本地模型" },
+  { value: "gemini", label: "Gemini", eyebrow: "Google" },
 ];
 
 const CUSTOM_MODEL_VALUE = "__custom__";
@@ -49,17 +53,24 @@ function describeProvider(provider: AiProviderKind) {
   switch (provider) {
     case "openai":
       return "云端高可用，默认适合通用对话与配置生成。";
+    case "openai_compatible":
+      return "通用 OpenAI 格式兼容渠道，适用于 DeepSeek、Ollama 与其他第三方网关。";
     case "claude":
       return "偏长文本与推理分析，适合诊断和解释。";
-    case "deepseek":
-      return "性价比高，适合日常交互与推理混合场景。";
-    case "ollama":
-      return "本地运行，不依赖云端 API Key，可自定义模型名。";
+    case "gemini":
+      return "Google Gemini 渠道，适合通用对话、多模态与长上下文场景。";
   }
 }
 
 function baseUrlPlaceholder(provider: AiProviderKind) {
-  return provider === "ollama" ? OLLAMA_DEFAULT_BASE_URL : "留空使用官方默认地址";
+  switch (provider) {
+    case "openai_compatible":
+      return "例如 https://api.deepseek.com/v1 或 http://127.0.0.1:11434/v1";
+    case "gemini":
+      return "留空使用 Gemini 官方默认地址";
+    default:
+      return "留空使用官方默认地址";
+  }
 }
 
 function connectionTone(
@@ -73,6 +84,33 @@ function connectionTone(
   return success
     ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
     : "border-rose-500/20 bg-rose-500/10 text-rose-200";
+}
+
+function modelCatalogTone(hasBlockingReason: boolean, source: AiModelCatalogSource | undefined) {
+  if (hasBlockingReason || source === "empty") {
+    return "border-amber-500/20 bg-amber-500/10 text-amber-200";
+  }
+
+  if (source === "fallback") {
+    return "border-sky-500/20 bg-sky-500/10 text-sky-200";
+  }
+
+  if (source === "remote") {
+    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-200";
+  }
+
+  return "border-border/70 bg-background/70 text-muted-foreground";
+}
+
+function modelIdHint(provider: AiProviderKind) {
+  switch (provider) {
+    case "openai_compatible":
+      return "支持输入 DeepSeek、Ollama 或任意 OpenAI 兼容模型名。";
+    case "gemini":
+      return "如需切换新版 Gemini 模型，也可直接在这里手动覆盖。";
+    default:
+      return "如果官方模型名更新，可直接在这里手动覆盖。";
+  }
 }
 
 function triggerClassName() {
@@ -211,22 +249,61 @@ export function AiSettingsPanel() {
   const connectionTestMutation = useAiConnectionTestMutation();
   const service = useAiServiceControls();
   const [draft, setDraft] = useState<AiSettingsValue>(DEFAULT_AI_SETTINGS);
+  const [modelLookupKey, setModelLookupKey] = useState({
+    provider: DEFAULT_AI_SETTINGS.provider,
+    apiKey: DEFAULT_AI_SETTINGS.apiKey,
+    baseUrl: DEFAULT_AI_SETTINGS.baseUrl,
+  });
   const [showApiKey, setShowApiKey] = useState(false);
 
   useEffect(() => {
     if (settingsQuery.data) {
       setDraft(settingsQuery.data);
+      setModelLookupKey({
+        provider: settingsQuery.data.provider,
+        apiKey: settingsQuery.data.apiKey,
+        baseUrl: settingsQuery.data.baseUrl,
+      });
     }
   }, [settingsQuery.data]);
 
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setModelLookupKey({
+        provider: draft.provider,
+        apiKey: draft.apiKey,
+        baseUrl: draft.baseUrl,
+      });
+    }, 450);
+
+    return () => window.clearTimeout(timeout);
+  }, [draft.provider, draft.apiKey, draft.baseUrl]);
+
+  const modelLookupDraft = useMemo<AiSettingsValue>(
+    () => ({ ...draft, ...modelLookupKey }),
+    [draft, modelLookupKey],
+  );
+
+  const modelCatalogQuery = useAiModelCatalogQuery(modelLookupDraft, true);
+
   const providerModels = useMemo(
-    () => getProviderModels(draft.provider),
-    [draft.provider],
+    () => {
+      const remoteModels = modelCatalogQuery.data?.models ?? [];
+      return remoteModels.length > 0 ? remoteModels : getProviderModels(draft.provider);
+    },
+    [draft.provider, modelCatalogQuery.data?.models],
   );
   const hasCustomModel = !providerModels.includes(draft.model);
   const modelSelectValue = hasCustomModel ? CUSTOM_MODEL_VALUE : draft.model;
   const isConfigured = isAiConfigured(draft);
   const currentSettings = settingsQuery.data ?? DEFAULT_AI_SETTINGS;
+  const canRefreshModels = canFetchProviderModels(draft);
+  const modelCatalogBlockingReason = getModelCatalogBlockingReason(draft);
+  const modelCatalogMessage =
+    modelCatalogBlockingReason ??
+    modelCatalogQuery.error?.message ??
+    modelCatalogQuery.data?.message ??
+    "修改 Provider、API Key 或 Base URL 后会自动获取可用模型。";
   const isDirty = useMemo(
     () =>
       JSON.stringify(normalizeAiSettings(draft)) !== JSON.stringify(normalizeAiSettings(currentSettings)),
@@ -251,7 +328,6 @@ export function AiSettingsPanel() {
         ...current,
         provider,
         model: nextModel,
-        apiKey: provider === "ollama" ? "" : current.apiKey,
       };
     });
   };
@@ -293,6 +369,30 @@ export function AiSettingsPanel() {
       }
     } catch (error) {
       toast.error(`连通性测试失败: ${String(error)}`);
+    }
+  };
+
+  const handleRefreshModels = async () => {
+    try {
+      setModelLookupKey({
+        provider: draft.provider,
+        apiKey: draft.apiKey,
+        baseUrl: draft.baseUrl,
+      });
+      const result = await modelCatalogQuery.refetch();
+      if (result.error) {
+        toast.error(`获取模型列表失败: ${result.error.message}`);
+        return;
+      }
+
+      const message = result.data?.message ?? "模型列表已刷新。";
+      if (result.data?.source === "remote") {
+        toast.success(message);
+      } else {
+        toast(message);
+      }
+    } catch (error) {
+      toast.error(`获取模型列表失败: ${String(error)}`);
     }
   };
 
@@ -395,31 +495,67 @@ export function AiSettingsPanel() {
             </FieldShell>
 
             <div className="grid gap-4 lg:grid-cols-2">
-              <FieldShell label="模型预设" hint="切换 Provider 时会自动切换到该 Provider 的默认模型。">
-                <SelectField
-                  value={modelSelectValue}
-                  onValueChange={(value) => {
-                    if (value === CUSTOM_MODEL_VALUE) {
-                      return;
-                    }
+              <FieldShell
+                label="可用模型"
+                hint="优先展示自动获取到的模型；获取失败时会回退到内置列表或保留手动输入。"
+              >
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs text-muted-foreground">
+                      {modelCatalogQuery.data?.source === "remote"
+                        ? "来源: 远端自动发现"
+                        : modelCatalogQuery.data?.source === "fallback"
+                          ? "来源: 内置回退列表"
+                          : "来源: 手动输入 / 待获取"}
+                    </div>
+                    <ActionButton
+                      tone="ghost"
+                      disabled={!canRefreshModels || modelCatalogQuery.isFetching}
+                      onClick={handleRefreshModels}
+                    >
+                      {modelCatalogQuery.isFetching ? (
+                        <LoaderCircle className="size-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="size-4" />
+                      )}
+                      刷新模型
+                    </ActionButton>
+                  </div>
 
-                    updateDraft((current) => ({ ...current, model: value }));
-                  }}
-                >
-                  {providerModels.map((model) => (
-                    <SelectItem key={model} value={model} label={model} />
-                  ))}
-                  <SelectItem
-                    value={CUSTOM_MODEL_VALUE}
-                    label="自定义模型"
-                    description="在下方输入自定义模型 ID"
-                  />
-                </SelectField>
+                  <SelectField
+                    value={modelSelectValue}
+                    onValueChange={(value) => {
+                      if (value === CUSTOM_MODEL_VALUE) {
+                        return;
+                      }
+
+                      updateDraft((current) => ({ ...current, model: value }));
+                    }}
+                  >
+                    {providerModels.map((model) => (
+                      <SelectItem key={model} value={model} label={model} />
+                    ))}
+                    <SelectItem
+                      value={CUSTOM_MODEL_VALUE}
+                      label="自定义模型"
+                      description="在下方输入自定义模型 ID"
+                    />
+                  </SelectField>
+
+                  <div
+                    className={cn(
+                      "rounded-[1rem] border px-3 py-3 text-xs leading-6",
+                      modelCatalogTone(Boolean(modelCatalogBlockingReason), modelCatalogQuery.data?.source),
+                    )}
+                  >
+                    {modelCatalogMessage}
+                  </div>
+                </div>
               </FieldShell>
 
               <FieldShell
                 label="模型 ID"
-                hint={draft.provider === "ollama" ? "支持输入本地模型名，例如 qwen3:latest。" : "如果官方模型名更新，可直接在这里手动覆盖。"}
+                hint={modelIdHint(draft.provider)}
               >
                 <input
                   type="text"
@@ -428,42 +564,40 @@ export function AiSettingsPanel() {
                     updateDraft((current) => ({ ...current, model: event.target.value }))
                   }
                   className={fieldInputClassName()}
-                  placeholder={getDefaultModel(draft.provider)}
+                  placeholder={getDefaultModel(draft.provider) || "例如 deepseek-chat / gemini-2.5-flash"}
                 />
               </FieldShell>
             </div>
 
-            {providerRequiresApiKey(draft.provider) ? (
-              <FieldShell
-                label="API Key"
-                hint="密码模式保存，Ollama 模式不会显示此字段。"
-              >
-                <div className="relative">
-                  <KeyRound className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <input
-                    type={showApiKey ? "text" : "password"}
-                    value={draft.apiKey}
-                    onChange={(event) =>
-                      updateDraft((current) => ({ ...current, apiKey: event.target.value }))
-                    }
-                    className={cn(fieldInputClassName(), "pl-11 pr-14")}
-                    placeholder="输入 Provider API Key"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowApiKey((current) => !current)}
-                    className="absolute right-3 top-1/2 inline-flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border/70 bg-background/80 text-muted-foreground transition-colors hover:border-primary/20 hover:text-foreground"
-                  >
-                    {showApiKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                  </button>
-                </div>
-              </FieldShell>
-            ) : null}
+            <FieldShell
+              label="API Key"
+              hint={providerRequiresApiKey(draft.provider) ? "密码模式保存。当前渠道需要 API Key。" : "可选。兼容本地 Ollama 这类无鉴权服务时可以留空。"}
+            >
+              <div className="relative">
+                <KeyRound className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type={showApiKey ? "text" : "password"}
+                  value={draft.apiKey}
+                  onChange={(event) =>
+                    updateDraft((current) => ({ ...current, apiKey: event.target.value }))
+                  }
+                  className={cn(fieldInputClassName(), "pl-11 pr-14")}
+                  placeholder="输入 Provider API Key"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowApiKey((current) => !current)}
+                  className="absolute right-3 top-1/2 inline-flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border/70 bg-background/80 text-muted-foreground transition-colors hover:border-primary/20 hover:text-foreground"
+                >
+                  {showApiKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
+            </FieldShell>
 
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_12rem]">
               <FieldShell
                 label="Base URL"
-                hint="可选。留空时使用 Provider 默认地址。"
+                hint={providerRequiresBaseUrl(draft.provider) ? "当前兼容渠道必填。请填写兼容服务的 API 根地址。" : "可选。留空时使用 Provider 默认地址。"}
               >
                 <input
                   type="text"

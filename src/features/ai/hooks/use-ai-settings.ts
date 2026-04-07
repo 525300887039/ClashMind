@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
   type AiConnectionTestResult,
+  type AiModelCatalog,
   type AiProviderKind,
   type AiProviderSettings,
   type AiSettings,
@@ -11,8 +12,11 @@ import { queryClient } from "@/lib/query-client";
 
 const AI_SETTINGS_QUERY_KEY = ["ai-settings"] as const;
 const AI_SERVICE_STATUS_QUERY_KEY = ["ai-service-status"] as const;
+const AI_MODEL_CATALOG_QUERY_KEY = ["ai-model-catalog"] as const;
 const LEGACY_APP_STORE_KEY = "clashmind-store";
 const LEGACY_AI_SETTINGS_MISSING_ERROR = "AI 设置文件不存在";
+const LEGACY_DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
+const LEGACY_OLLAMA_OPENAI_BASE_URL = "http://127.0.0.1:11434/v1";
 const LEGACY_AI_STATE_KEYS = [
   "aiProvider",
   "aiModel",
@@ -24,17 +28,16 @@ const LEGACY_AI_STATE_KEYS = [
 
 export const AI_PROVIDER_MODELS: Record<AiProviderKind, readonly string[]> = {
   openai: ["gpt-4o", "gpt-4o-mini", "gpt-4.1-mini", "o3-mini"],
+  openai_compatible: [],
   claude: ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-1"],
-  deepseek: ["deepseek-chat", "deepseek-reasoner"],
-  ollama: ["llama3.1", "qwen2.5", "mistral"],
+  gemini: ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"],
 };
 
-export const OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434/api";
 const AI_PROVIDER_DEFAULT_MODELS: Record<AiProviderKind, string> = {
   openai: "gpt-4o-mini",
+  openai_compatible: "",
   claude: "claude-sonnet-4-5",
-  deepseek: "deepseek-chat",
-  ollama: "llama3.1",
+  gemini: "gemini-2.5-flash",
 };
 
 export const DEFAULT_AI_SETTINGS: AiSettings = {
@@ -53,8 +56,32 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function getLegacyProviderDefaultBaseUrl(value: unknown): string {
+  if (value === "deepseek") {
+    return LEGACY_DEEPSEEK_BASE_URL;
+  }
+
+  if (value === "ollama") {
+    return LEGACY_OLLAMA_OPENAI_BASE_URL;
+  }
+
+  return "";
+}
+
 function isAiProviderKind(value: unknown): value is AiProviderKind {
-  return value === "openai" || value === "claude" || value === "deepseek" || value === "ollama";
+  return value === "openai" || value === "openai_compatible" || value === "claude" || value === "gemini";
+}
+
+function normalizeProvider(value: unknown): AiProviderKind {
+  if (isAiProviderKind(value)) {
+    return value;
+  }
+
+  if (value === "deepseek" || value === "ollama") {
+    return "openai_compatible";
+  }
+
+  return DEFAULT_AI_SETTINGS.provider;
 }
 
 function clampTemperature(value: number) {
@@ -66,7 +93,11 @@ function clampTemperature(value: number) {
 }
 
 export function providerRequiresApiKey(provider: AiProviderKind) {
-  return provider !== "ollama";
+  return provider === "openai" || provider === "claude" || provider === "gemini";
+}
+
+export function providerRequiresBaseUrl(provider: AiProviderKind) {
+  return provider === "openai_compatible";
 }
 
 export function getProviderModels(provider: AiProviderKind) {
@@ -80,17 +111,36 @@ export function getDefaultModel(provider: AiProviderKind) {
 export function normalizeAiSettings(settings: AiSettings): AiSettings {
   const provider = settings.provider;
   const model = settings.model.trim();
+  const baseUrl = settings.baseUrl.trim();
   const maxTokens = Math.floor(Number.isFinite(settings.maxTokens) ? settings.maxTokens : 0);
 
   return {
     provider,
     model: model.length > 0 ? model : getDefaultModel(provider),
     apiKey: settings.apiKey.trim(),
-    baseUrl: settings.baseUrl.trim(),
+    baseUrl,
     temperature: clampTemperature(settings.temperature),
     maxTokens: maxTokens > 0 ? maxTokens : DEFAULT_AI_SETTINGS.maxTokens,
     autoStart: Boolean(settings.autoStart),
   };
+}
+
+export function getModelCatalogBlockingReason(settings: AiSettings): string | null {
+  const normalized = normalizeAiSettings(settings);
+
+  if (providerRequiresApiKey(normalized.provider) && normalized.apiKey.length === 0) {
+    return "请先填写 API Key，再自动获取模型。";
+  }
+
+  if (providerRequiresBaseUrl(normalized.provider) && normalized.baseUrl.length === 0) {
+    return "请先填写兼容服务 Base URL，再自动获取模型。";
+  }
+
+  return null;
+}
+
+export function canFetchProviderModels(settings: AiSettings) {
+  return getModelCatalogBlockingReason(settings) === null;
 }
 
 export function isAiConfigured(settings: AiSettings | null | undefined) {
@@ -99,8 +149,10 @@ export function isAiConfigured(settings: AiSettings | null | undefined) {
   }
 
   const normalized = normalizeAiSettings(settings);
-  return normalized.model.length > 0 && (
-    !providerRequiresApiKey(normalized.provider) || normalized.apiKey.length > 0
+  return (
+    normalized.model.length > 0 &&
+    (!providerRequiresApiKey(normalized.provider) || normalized.apiKey.length > 0) &&
+    (!providerRequiresBaseUrl(normalized.provider) || normalized.baseUrl.length > 0)
   );
 }
 
@@ -137,9 +189,9 @@ function readLegacyAiSettings() {
     return null;
   }
 
-  const provider = isAiProviderKind(state.aiProvider)
-    ? state.aiProvider
-    : DEFAULT_AI_SETTINGS.provider;
+  const provider = normalizeProvider(state.aiProvider);
+  const fallbackBaseUrl = getLegacyProviderDefaultBaseUrl(state.aiProvider);
+  const rawBaseUrl = typeof state.aiBaseUrl === "string" ? state.aiBaseUrl.trim() : "";
   const temperature =
     typeof state.aiTemperature === "number"
       ? state.aiTemperature
@@ -153,7 +205,7 @@ function readLegacyAiSettings() {
     provider,
     model: typeof state.aiModel === "string" ? state.aiModel : "",
     apiKey: typeof state.aiApiKey === "string" ? state.aiApiKey : "",
-    baseUrl: typeof state.aiBaseUrl === "string" ? state.aiBaseUrl : "",
+    baseUrl: rawBaseUrl || fallbackBaseUrl,
     temperature,
     maxTokens: DEFAULT_AI_SETTINGS.maxTokens,
     autoStart,
@@ -237,7 +289,11 @@ function ensureProviderSettings(settings: AiSettings): AiProviderSettings {
   }
 
   if (providerRequiresApiKey(normalized.provider) && normalized.apiKey.length === 0) {
-    throw new Error("请先在设置页配置 AI Provider 和 API Key。");
+    throw new Error("请先在设置页配置当前 Provider 的 API Key。");
+  }
+
+  if (providerRequiresBaseUrl(normalized.provider) && normalized.baseUrl.length === 0) {
+    throw new Error("请先在设置页配置兼容服务 Base URL。");
   }
 
   return {
@@ -317,6 +373,25 @@ export function useAiConnectionTestMutation() {
       ensureProviderSettings(normalized);
       return api.ai.testConnection(normalized);
     },
+  });
+}
+
+export function useAiModelCatalogQuery(settings: AiSettings, enabled: boolean) {
+  const normalized = normalizeAiSettings(settings);
+  const canFetch = canFetchProviderModels(normalized);
+
+  return useQuery<AiModelCatalog, Error>({
+    queryKey: [
+      ...AI_MODEL_CATALOG_QUERY_KEY,
+      normalized.provider,
+      normalized.baseUrl,
+      normalized.apiKey,
+    ],
+    queryFn: () => api.ai.fetchModels(normalized),
+    enabled: enabled && canFetch,
+    retry: false,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 }
 

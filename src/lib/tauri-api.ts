@@ -86,7 +86,7 @@ export interface GeoStat {
   totalTraffic: number;
 }
 
-export type AiProviderKind = "openai" | "claude" | "deepseek" | "ollama";
+export type AiProviderKind = "openai" | "openai_compatible" | "claude" | "gemini";
 
 export type AiChatRole = "user" | "assistant" | "system";
 
@@ -134,6 +134,14 @@ export interface AiPingResponse {
 export interface AiConnectionTestResult {
   success: boolean;
   latencyMs: number;
+  message: string;
+}
+
+export type AiModelCatalogSource = "remote" | "fallback" | "empty";
+
+export interface AiModelCatalog {
+  models: string[];
+  source: AiModelCatalogSource;
   message: string;
 }
 
@@ -340,6 +348,8 @@ export const api = {
     ping: () => invoke<AiPingResponse>("ai_ping"),
     testConnection: (settings: AiSettings) =>
       invoke<AiConnectionTestResult>("test_ai_connection", { settings }),
+    fetchModels: (settings: AiSettings) =>
+      invoke<AiModelCatalog>("fetch_ai_models", { settings }),
     listSnapshots: (limit: number) =>
       invoke<ConfigSnapshot[]>("list_snapshots", { limit }),
     restoreSnapshot: (id: number) => invoke<void>("restore_snapshot", { id }),

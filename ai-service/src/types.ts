@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const providerIdSchema = z.enum(["openai", "claude", "deepseek", "ollama"]);
+export const providerIdSchema = z.enum(["openai", "openai_compatible", "claude", "gemini"]);
 
 export type ProviderId = z.infer<typeof providerIdSchema>;
 
@@ -16,6 +16,16 @@ export const providerSettingsSchema = z
   .strict();
 
 export interface ProviderSettings extends z.infer<typeof providerSettingsSchema> {}
+
+export const modelCatalogSettingsSchema = z
+  .object({
+    provider: providerIdSchema,
+    apiKey: z.string().min(1).optional(),
+    baseUrl: z.string().min(1).optional(),
+  })
+  .strict();
+
+export interface ModelCatalogSettings extends z.infer<typeof modelCatalogSettingsSchema> {}
 
 export const chatMessageSchema = z
   .object({
@@ -181,6 +191,24 @@ export const connectionTestResultSchema = z
   .strict();
 
 export interface ConnectionTestResult extends z.infer<typeof connectionTestResultSchema> {}
+
+export const modelCatalogParamsSchema = z
+  .object({
+    settings: modelCatalogSettingsSchema,
+  })
+  .strict();
+
+export interface ModelCatalogParams extends z.infer<typeof modelCatalogParamsSchema> {}
+
+export const modelCatalogResultSchema = z
+  .object({
+    models: z.array(z.string().min(1)),
+    source: z.enum(["remote", "fallback", "empty"]),
+    message: z.string().min(1),
+  })
+  .strict();
+
+export interface ModelCatalogResult extends z.infer<typeof modelCatalogResultSchema> {}
 
 const textDeltaEventSchema = z
   .object({

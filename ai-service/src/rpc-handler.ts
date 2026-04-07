@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { assemblePrompt } from "./prompts/index.js";
 import { buildReportPrompt } from "./prompts/report.js";
-import { createModel } from "./providers/index.js";
+import { createModel, listModels } from "./providers/index.js";
 import {
   ConfigSanitizer,
   type ConfigDiff,
@@ -20,6 +20,8 @@ import { handleRustCallbackResponse, requestFromRust } from "./tools/rust-rpc.js
 import {
   chatParamsSchema,
   connectionTestParamsSchema,
+  modelCatalogParamsSchema,
+  modelCatalogResultSchema,
   type ChatParams,
   reportParamsSchema,
   reportStatsPayloadSchema,
@@ -486,6 +488,23 @@ registerHandler("test_connection", async (params) => {
       message: getErrorMessage(error),
     };
   }
+});
+
+registerHandler("list_models", async (params) => {
+  const parsedParams = modelCatalogParamsSchema.safeParse(params);
+
+  if (!parsedParams.success) {
+    throw new Error(parsedParams.error.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const result = await listModels(parsedParams.data.settings);
+  const parsedResult = modelCatalogResultSchema.safeParse(result);
+
+  if (!parsedResult.success) {
+    throw new Error(parsedResult.error.issues.map((issue) => issue.message).join("; "));
+  }
+
+  return parsedResult.data;
 });
 
 registerHandler("generate_report", async (params) => {

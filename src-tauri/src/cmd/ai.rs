@@ -30,27 +30,34 @@ const DEFAULT_MANUAL_SNAPSHOT_DESCRIPTION: &str = "手动快照";
 const REPORT_RPC_TIMEOUT: Duration = Duration::from_secs(120);
 const AI_SETTINGS_FILE_NAME: &str = "ai-settings.json";
 
+const LEGACY_DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com/v1";
+const LEGACY_OLLAMA_OPENAI_BASE_URL: &str = "http://127.0.0.1:11434/v1";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum AiProviderKind {
     Openai,
+    OpenaiCompatible,
     Claude,
-    Deepseek,
-    Ollama,
+    Gemini,
 }
 
 impl AiProviderKind {
     fn default_model(&self) -> &'static str {
         match self {
             Self::Openai => "gpt-4o-mini",
+            Self::OpenaiCompatible => "",
             Self::Claude => "claude-sonnet-4-5",
-            Self::Deepseek => "deepseek-chat",
-            Self::Ollama => "llama3.1",
+            Self::Gemini => "gemini-2.5-flash",
         }
     }
 
     fn requires_api_key(&self) -> bool {
-        !matches!(self, Self::Ollama)
+        matches!(self, Self::Openai | Self::Claude | Self::Gemini)
+    }
+
+    fn requires_base_url(&self) -> bool {
+        matches!(self, Self::OpenaiCompatible)
     }
 }
 
@@ -81,6 +88,14 @@ pub struct AiProviderSettings {
     pub base_url: Option<String>,
     pub temperature: Option<f64>,
     pub max_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiModelCatalogSettings {
+    pub provider: AiProviderKind,
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -142,6 +157,12 @@ impl AiSettings {
             ));
         }
 
+        if self.provider.requires_base_url() && self.base_url.is_empty() {
+            return Err(AiSettingsError::InvalidSettings(
+                "当前 Provider 需要 Base URL".to_string(),
+            ));
+        }
+
         Ok(())
     }
 
@@ -155,6 +176,14 @@ impl AiSettings {
             max_tokens: Some(self.max_tokens),
         }
     }
+
+    fn to_model_catalog_settings(&self) -> AiModelCatalogSettings {
+        AiModelCatalogSettings {
+            provider: self.provider.clone(),
+            api_key: (!self.api_key.is_empty()).then(|| self.api_key.clone()),
+            base_url: (!self.base_url.is_empty()).then(|| self.base_url.clone()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -162,6 +191,22 @@ impl AiSettings {
 pub struct AiConnectionTestResult {
     pub success: bool,
     pub latency_ms: u64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AiModelCatalogSource {
+    Remote,
+    Fallback,
+    Empty,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiModelCatalog {
+    pub models: Vec<String>,
+    pub source: AiModelCatalogSource,
     pub message: String,
 }
 
@@ -391,6 +436,8 @@ pub enum AiSettingsError {
     InvalidSettings(String),
     #[error("解析连通性测试结果失败: {0}")]
     InvalidConnectionTest(String),
+    #[error("解析模型列表结果失败: {0}")]
+    InvalidModelCatalog(String),
     #[error("{0}")]
     Sidecar(#[from] AiSidecarError),
 }
@@ -545,28 +592,27 @@ pub(crate) async fn get_report_stats(
     let end_iso = format_utc_day_start(window.end_day_exclusive);
     let db = db::get_db_pool(app_handle).await?;
 
-    let (current_overview, previous_overview, top_domains, top_rules, rule_hit_summary) =
-        tokio::try_join!(
-            repo_connection::get_overview_by_window(&db, &start_day, &end_day_exclusive),
-            repo_connection::get_overview_by_window(
-                &db,
-                &previous_start_day,
-                &previous_end_day_exclusive,
-            ),
-            repo_domain::query_top_domains_by_window(
-                &db,
-                &start_day,
-                &end_day_exclusive,
-                report_type.max_top_n_count(),
-            ),
-            repo_connection::query_rule_stats_by_window(
-                &db,
-                &start_day,
-                &end_day_exclusive,
-                report_type.max_top_n_count(),
-            ),
-            repo_connection::summarize_rule_hits_by_window(&db, &start_day, &end_day_exclusive),
-        )?;
+    let (current_overview, previous_overview, top_domains, top_rules, rule_hit_summary) = tokio::try_join!(
+        repo_connection::get_overview_by_window(&db, &start_day, &end_day_exclusive),
+        repo_connection::get_overview_by_window(
+            &db,
+            &previous_start_day,
+            &previous_end_day_exclusive,
+        ),
+        repo_domain::query_top_domains_by_window(
+            &db,
+            &start_day,
+            &end_day_exclusive,
+            report_type.max_top_n_count(),
+        ),
+        repo_connection::query_rule_stats_by_window(
+            &db,
+            &start_day,
+            &end_day_exclusive,
+            report_type.max_top_n_count(),
+        ),
+        repo_connection::summarize_rule_hits_by_window(&db, &start_day, &end_day_exclusive),
+    )?;
 
     let peak_hour = if report_type == ReportType::Daily {
         let hourly_points = repo_traffic::query_hourly(&db, &start_iso, &end_iso).await?;
@@ -646,6 +692,46 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
     })
 }
 
+fn migrate_legacy_provider_value(settings_value: &mut serde_json::Value) {
+    let Some(settings_object) = settings_value.as_object_mut() else {
+        return;
+    };
+
+    let Some(provider) = settings_object
+        .get("provider")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return;
+    };
+
+    let fallback_base_url = match provider {
+        "deepseek" => Some(LEGACY_DEEPSEEK_BASE_URL),
+        "ollama" => Some(LEGACY_OLLAMA_OPENAI_BASE_URL),
+        _ => None,
+    };
+
+    let Some(fallback_base_url) = fallback_base_url else {
+        return;
+    };
+
+    settings_object.insert(
+        "provider".to_string(),
+        serde_json::Value::String("openai_compatible".to_string()),
+    );
+
+    let has_base_url = settings_object
+        .get("baseUrl")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+
+    if !has_base_url {
+        settings_object.insert(
+            "baseUrl".to_string(),
+            serde_json::Value::String(fallback_base_url.to_string()),
+        );
+    }
+}
+
 fn ai_settings_file_path(app: &AppHandle) -> Result<PathBuf, AiSettingsError> {
     app.path()
         .app_data_dir()
@@ -670,8 +756,21 @@ async fn load_ai_settings(app: &AppHandle) -> Result<AiSettings, AiSettingsError
         }
     };
 
-    match serde_json::from_str::<AiSettings>(&settings_content) {
-        Ok(settings) => Ok(settings.normalized()),
+    match serde_json::from_str::<serde_json::Value>(&settings_content) {
+        Ok(mut settings_value) => {
+            migrate_legacy_provider_value(&mut settings_value);
+
+            match serde_json::from_value::<AiSettings>(settings_value) {
+                Ok(settings) => Ok(settings.normalized()),
+                Err(error) => {
+                    tracing::warn!(
+                        "AI 设置文件解析失败，已回退到默认值: path={}, error={error}",
+                        settings_path.display()
+                    );
+                    Ok(AiSettings::default())
+                }
+            }
+        }
         Err(error) => {
             tracing::warn!(
                 "AI 设置文件解析失败，已回退到默认值: path={}, error={error}",
@@ -881,10 +980,7 @@ pub async fn get_ai_settings(app: AppHandle) -> Result<AiSettings, AiSettingsErr
 }
 
 #[tauri::command]
-pub async fn set_ai_settings(
-    app: AppHandle,
-    settings: AiSettings,
-) -> Result<(), AiSettingsError> {
+pub async fn set_ai_settings(app: AppHandle, settings: AiSettings) -> Result<(), AiSettingsError> {
     store_ai_settings(&app, settings.normalized()).await
 }
 
@@ -919,6 +1015,31 @@ pub async fn test_ai_connection(
 
     serde_json::from_value(response)
         .map_err(|error| AiSettingsError::InvalidConnectionTest(error.to_string()))
+}
+
+#[tauri::command]
+pub async fn fetch_ai_models(
+    app: AppHandle,
+    state: tauri::State<'_, AiSidecarState>,
+    settings: AiSettings,
+) -> Result<AiModelCatalog, AiSettingsError> {
+    let settings = settings.normalized();
+
+    if !sidecar::is_ai_running(&state) {
+        sidecar::start_ai(&app, &state).await?;
+    }
+
+    let response = sidecar::send_rpc(
+        &state,
+        "list_models",
+        Some(serde_json::json!({
+            "settings": settings.to_model_catalog_settings(),
+        })),
+    )
+    .await?;
+
+    serde_json::from_value(response)
+        .map_err(|error| AiSettingsError::InvalidModelCatalog(error.to_string()))
 }
 
 #[tauri::command]
@@ -1150,6 +1271,53 @@ mod tests {
         let provider_settings = settings.to_provider_settings();
 
         assert_eq!(provider_settings.max_tokens, Some(2048));
+    }
+
+    #[test]
+    fn openai_compatible_requires_base_url_but_not_api_key() {
+        let settings = AiSettings {
+            provider: AiProviderKind::OpenaiCompatible,
+            model: "llama3.2".to_string(),
+            api_key: String::new(),
+            base_url: String::new(),
+            temperature: 0.3,
+            max_tokens: 2048,
+            auto_start: false,
+        };
+
+        let error = settings.validate_for_provider_request();
+        assert!(matches!(error, Err(AiSettingsError::InvalidSettings(_))));
+
+        let valid_settings = AiSettings {
+            base_url: LEGACY_OLLAMA_OPENAI_BASE_URL.to_string(),
+            ..settings
+        };
+
+        assert!(valid_settings.validate_for_provider_request().is_ok());
+    }
+
+    #[test]
+    fn migrate_legacy_provider_value_maps_deepseek_to_openai_compatible() {
+        let mut value = serde_json::json!({
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "apiKey": "test-key",
+            "baseUrl": "",
+            "temperature": 0.3,
+            "maxTokens": 4096,
+            "autoStart": false
+        });
+
+        migrate_legacy_provider_value(&mut value);
+
+        assert_eq!(
+            value.get("provider").and_then(serde_json::Value::as_str),
+            Some("openai_compatible")
+        );
+        assert_eq!(
+            value.get("baseUrl").and_then(serde_json::Value::as_str),
+            Some(LEGACY_DEEPSEEK_BASE_URL)
+        );
     }
 
     #[test]
