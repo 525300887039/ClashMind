@@ -1,5 +1,6 @@
 import yaml from "js-yaml";
 import { z } from "zod";
+import { isRecord } from "../utils.js";
 
 export interface DiffChange {
   type: "add" | "remove" | "modify";
@@ -197,10 +198,6 @@ const DIFF_CONTEXT_LINES = 3;
 const PLACEHOLDER_WARNING =
   "注意：配置中仍包含占位符，请在确认前填写实际 server 或认证信息。";
 const PLACEHOLDER_PATTERN = /\bSERVER_\d+\b|\[REDACTED\]/;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function normalizeYamlText(value: string): string {
   return value.replace(/\r\n/g, "\n");

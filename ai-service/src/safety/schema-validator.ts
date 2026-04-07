@@ -1,5 +1,6 @@
 import yaml from "js-yaml";
 import { z } from "zod";
+import { isRecord } from "../utils.js";
 
 const PROXY_TYPES = [
   "ss",
@@ -182,10 +183,6 @@ export const MihomoConfigSchema = z
     dns: DnsSchema.optional(),
   })
   .passthrough();
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function toPathString(path: Array<string | number>): string {
   if (path.length === 0) {

@@ -8,6 +8,7 @@ import {
   type AiSettings,
 } from "@/lib/tauri-api";
 import { normalizeError } from "@/lib/error";
+import { isRecord } from "@/lib/utils";
 import { queryClient } from "@/lib/query-client";
 
 const AI_SETTINGS_QUERY_KEY = ["ai-settings"] as const;
@@ -51,10 +52,6 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
 };
 
 let legacyAiSettingsMigrationPromise: Promise<AiSettings | null> | null = null;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function getLegacyProviderDefaultBaseUrl(value: unknown): string {
   if (value === "deepseek") {
@@ -137,10 +134,6 @@ export function getModelCatalogBlockingReason(settings: AiSettings): string | nu
   }
 
   return null;
-}
-
-export function canFetchProviderModels(settings: AiSettings) {
-  return getModelCatalogBlockingReason(settings) === null;
 }
 
 export function isAiConfigured(settings: AiSettings | null | undefined) {
@@ -378,7 +371,7 @@ export function useAiConnectionTestMutation() {
 
 export function useAiModelCatalogQuery(settings: AiSettings, enabled: boolean) {
   const normalized = normalizeAiSettings(settings);
-  const canFetch = canFetchProviderModels(normalized);
+  const canFetch = getModelCatalogBlockingReason(normalized) === null;
 
   return useQuery<AiModelCatalog, Error>({
     queryKey: [

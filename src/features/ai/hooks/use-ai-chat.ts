@@ -10,6 +10,7 @@ import {
   isPendingConfigChangeResult,
 } from "@/lib/tauri-api";
 import { normalizeError } from "@/lib/error";
+import { isRecord } from "@/lib/utils";
 import {
   ensureAiServiceRunning,
   getAiSettingsSnapshot,
@@ -39,10 +40,6 @@ async function getPersistenceModel() {
   const settings = await getAiSettingsSnapshot();
   const model = settings.model.trim();
   return model.length > 0 ? model : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isConfigApplyPayload(value: unknown): value is ConfigApplyPayload {

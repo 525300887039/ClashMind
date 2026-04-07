@@ -1,4 +1,5 @@
 import yaml from "js-yaml";
+import { isRecord } from "../utils.js";
 
 interface ConfigDocument {
   [key: string]: unknown;
@@ -29,10 +30,6 @@ const SENSITIVE_PROXY_FIELDS = [
   "token",
   "obfs-password",
 ] as const;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function loadConfigDocument(yamlContent: string): ConfigDocument {
   const parsed = yaml.load(yamlContent);

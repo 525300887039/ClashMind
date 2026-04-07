@@ -598,6 +598,6 @@ export async function handleRpcRequest(request: unknown): Promise<JsonRpcRespons
       return null;
     }
 
-    return createErrorResponse(rpcRequest.id, -32603, getErrorMessage(error));
+    return createErrorResponse(rpcRequest.id, -32603, getErrorMessage(error, "Internal error"));
   }
 }
