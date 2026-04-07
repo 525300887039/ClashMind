@@ -1,5 +1,6 @@
 import * as Accordion from "@radix-ui/react-accordion";
 import { ChevronDown } from "lucide-react";
+import { useMemo } from "react";
 import type { ProxiesResponse, ProxyGroup, ProxyNode } from "@/lib/tauri-api";
 import { cn } from "@/lib/utils";
 import { ProxyNodeCard } from "./proxy-node-card";
@@ -45,7 +46,7 @@ export function ProxyGroupList({ data }: { data: ProxiesResponse }) {
   const switchProxy = useSwitchProxy();
   const testGroupDelay = useTestGroupDelay();
 
-  const groups = parseGroups(data);
+  const groups = useMemo(() => parseGroups(data), [data]);
 
   return (
     <Accordion.Root type="multiple" className="space-y-2">

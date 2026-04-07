@@ -399,6 +399,7 @@ export function useAiServiceControls() {
     queryKey: AI_SERVICE_STATUS_QUERY_KEY,
     queryFn: api.ai.status,
     refetchInterval: 3000,
+    staleTime: 3000,
   });
 
   const startMutation = useMutation({

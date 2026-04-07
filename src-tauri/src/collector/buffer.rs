@@ -1,6 +1,7 @@
 //! Buffered connection writes with capacity and time-based flush triggers.
 
 use std::{
+    collections::HashSet,
     mem,
     time::{Duration, Instant},
 };
@@ -14,6 +15,7 @@ pub const DEFAULT_FLUSH_INTERVAL: Duration = Duration::from_secs(30);
 #[derive(Debug)]
 pub struct BatchBuffer {
     buffer: Vec<ConnectionRecord>,
+    buffered_ids: HashSet<String>,
     capacity: usize,
     flush_interval: Duration,
     last_flush: Instant,
@@ -26,6 +28,7 @@ impl BatchBuffer {
 
         Self {
             buffer: Vec::with_capacity(normalized_capacity),
+            buffered_ids: HashSet::with_capacity(normalized_capacity),
             capacity: normalized_capacity,
             flush_interval,
             last_flush: Instant::now(),
@@ -34,6 +37,7 @@ impl BatchBuffer {
 
     /// Pushes a record into the buffer and returns a drained batch when capacity is reached.
     pub fn push(&mut self, record: ConnectionRecord) -> Option<Vec<ConnectionRecord>> {
+        self.buffered_ids.insert(record.id.clone());
         self.buffer.push(record);
 
         if self.buffer.len() >= self.capacity {
@@ -58,6 +62,7 @@ impl BatchBuffer {
     #[must_use]
     pub fn flush(&mut self) -> Vec<ConnectionRecord> {
         self.last_flush = Instant::now();
+        self.buffered_ids.clear();
 
         let mut drained = Vec::with_capacity(self.capacity.max(self.buffer.len()));
         mem::swap(&mut drained, &mut self.buffer);
@@ -66,6 +71,10 @@ impl BatchBuffer {
 
     /// Restores a drained batch after a failed persistence attempt.
     pub fn restore(&mut self, mut records: Vec<ConnectionRecord>) {
+        for r in &records {
+            self.buffered_ids.insert(r.id.clone());
+        }
+
         if self.buffer.is_empty() {
             self.buffer = records;
             return;
@@ -77,7 +86,7 @@ impl BatchBuffer {
 
     #[must_use]
     pub fn contains_connection(&self, id: &str) -> bool {
-        self.buffer.iter().any(|record| record.id == id)
+        self.buffered_ids.contains(id)
     }
 
     #[must_use]
