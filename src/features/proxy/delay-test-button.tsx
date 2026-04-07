@@ -16,7 +16,7 @@ export function DelayTestButton({ onClick, loading }: DelayTestButtonProps) {
         onClick();
       }}
       className={cn(
-        "rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground",
+        "rounded-full p-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary",
         loading && "animate-pulse",
       )}
     >

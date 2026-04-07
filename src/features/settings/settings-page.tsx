@@ -6,6 +6,9 @@ import { AiSettingsPanel } from "@/features/ai/ai-settings";
 import { api } from "@/lib/tauri-api";
 import { cn } from "@/lib/utils";
 import { useAppStore, type Theme } from "@/stores/app-store";
+import { ActionButton } from "@/components/ui/action-button";
+import { FieldShell } from "@/components/ui/field-shell";
+import { PageHeader } from "@/components/ui/page-header";
 
 export function SettingsPage() {
   const store = useAppStore();
@@ -51,44 +54,18 @@ export function SettingsPage() {
     >
       <Toaster position="top-center" richColors />
 
-      <header className="relative overflow-hidden rounded-[2rem] border border-border/70 bg-linear-to-br from-primary/14 via-background to-background p-6 shadow-[0_28px_100px_-50px_rgba(15,23,42,0.65)]">
-        <div className="pointer-events-none absolute -right-10 top-0 size-40 rounded-full bg-primary/12 blur-3xl" />
-        <div className="pointer-events-none absolute bottom-0 left-0 h-24 w-56 bg-linear-to-r from-primary/10 to-transparent" />
-
-        <div className="relative flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/10 px-3 py-1 text-xs font-medium tracking-[0.18em] text-primary uppercase">
-              <Settings2 className="size-3.5" />
-              Control Surface
-            </div>
-            <h1 className="mt-4 text-3xl font-semibold tracking-tight text-foreground">
-              设置
-            </h1>
-            <p className="mt-2 text-sm leading-7 text-muted-foreground">
-              上半区维护 Mihomo 本地控制面的连接参数，下半区集中管理 AI Provider、
-              模型与 sidecar 服务状态。AI 设置会独立持久化到应用数据目录。
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className={cn(
-              "inline-flex items-center justify-center gap-2 rounded-full border px-4 py-2.5 text-sm font-medium transition-all",
-              "border-primary/20 bg-primary text-primary-foreground shadow-[0_18px_42px_-24px_var(--color-primary)] hover:translate-y-[-1px] hover:bg-primary/92",
-              "disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0",
-            )}
-          >
-            {saving ? (
-              <RotateCw className="size-4 animate-spin" />
-            ) : (
-              <Save className="size-4" />
-            )}
+      <PageHeader
+        eyebrow="Control Surface"
+        eyebrowIcon={Settings2}
+        title="设置"
+        description="上半区维护 Mihomo 本地控制面的连接参数，下半区集中管理 AI Provider、模型与 sidecar 服务状态。AI 设置会独立持久化到应用数据目录。"
+        actions={
+          <ActionButton tone="primary" onClick={handleSave} disabled={saving}>
+            {saving ? <RotateCw className="size-4 animate-spin" /> : <Save className="size-4" />}
             {saving ? "保存中" : "保存系统设置"}
-          </button>
-        </div>
-      </header>
+          </ActionButton>
+        }
+      />
 
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         <div className="space-y-4">
@@ -159,11 +136,11 @@ export function SettingsPage() {
                   <select
                     value={theme}
                     onChange={(event) => setTheme(event.target.value as Theme)}
-                    className={cn(inputClassName(), "appearance-auto")}
+                    className={cn(inputClassName(), "appearance-auto bg-background")}
                   >
-                    <option value="system">跟随系统</option>
-                    <option value="light">浅色</option>
-                    <option value="dark">深色</option>
+                    <option value="system" className="bg-background text-foreground">跟随系统</option>
+                    <option value="light" className="bg-background text-foreground">浅色</option>
+                    <option value="dark" className="bg-background text-foreground">深色</option>
                   </select>
                 </FieldShell>
               </div>
@@ -181,22 +158,5 @@ function inputClassName() {
   return cn(
     "h-12 w-full rounded-[1.1rem] border border-border/70 bg-background/80 px-4 text-sm text-foreground outline-none transition-colors",
     "placeholder:text-muted-foreground/70 hover:border-primary/20 focus-visible:border-primary/30",
-  );
-}
-
-function FieldShell({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="rounded-[1.45rem] border border-border/70 bg-background/68 p-4">
-      <div className="text-[11px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
-        {label}
-      </div>
-      <div className="mt-3">{children}</div>
-    </label>
   );
 }

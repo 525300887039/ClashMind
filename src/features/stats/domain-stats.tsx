@@ -3,7 +3,6 @@ import {
   BarChart3,
   ChevronDown,
   ChevronUp,
-  Search,
 } from "lucide-react";
 import {
   Bar,
@@ -19,7 +18,8 @@ import { cn, formatBytes } from "@/lib/utils";
 import { ChartEmptyState } from "./components/chart-empty-state";
 import { HighlightCard } from "./components/highlight-card";
 import { RangeSelector } from "./components/range-selector";
-import { StatusBadge } from "./components/status-badge";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { SearchInput } from "@/components/ui/search-input";
 import { SummaryCard } from "./components/summary-card";
 import { TableSkeleton } from "./components/table-skeleton";
 import { getRangeCaption, integerFormatter, type StatsRange } from "./constants";
@@ -220,16 +220,12 @@ export function DomainStats() {
                 isPending={isPending}
               />
 
-              <label className="relative block min-w-[18rem] flex-1">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  type="search"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="搜索域名，例如 github.com"
-                  className="h-11 w-full rounded-full border border-border bg-background/90 pl-10 pr-4 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-                />
-              </label>
+              <SearchInput
+                value={search}
+                onChange={setSearch}
+                placeholder="搜索域名，例如 github.com"
+                className="min-w-[18rem] flex-1"
+              />
             </div>
           </div>
 
@@ -452,7 +448,7 @@ export function DomainStats() {
                     key={`${row.displayDomain}-${row.rank}`}
                     className={cn(
                       "border-b border-border/60 transition hover:bg-muted/35",
-                      index % 2 === 0 ? "bg-background" : "bg-muted/10",
+                      index % 2 === 0 ? "bg-background" : "bg-muted/20",
                     )}
                   >
                     <td className="px-5 py-3 font-medium text-foreground">{row.rank}</td>

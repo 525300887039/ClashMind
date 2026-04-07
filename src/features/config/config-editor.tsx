@@ -19,20 +19,22 @@ export function ConfigEditor({ value, onChange }: ConfigEditorProps) {
   };
 
   return (
-    <Editor
-      height="100%"
-      language="yaml"
-      theme={resolvedTheme === "dark" ? "vs-dark" : "vs"}
-      value={value}
-      onChange={(v) => onChange(v ?? "")}
-      onMount={handleMount}
-      options={{
-        minimap: { enabled: false },
-        wordWrap: "on",
-        tabSize: 2,
-        fontSize: 13,
-        scrollBeyondLastLine: false,
-      }}
-    />
+    <div className="h-full">
+      <Editor
+        height="100%"
+        language="yaml"
+        theme={resolvedTheme === "dark" ? "vs-dark" : "vs"}
+        value={value}
+        onChange={(v) => onChange(v ?? "")}
+        onMount={handleMount}
+        options={{
+          minimap: { enabled: false },
+          wordWrap: "on",
+          tabSize: 2,
+          fontSize: 13,
+          scrollBeyondLastLine: false,
+        }}
+      />
+    </div>
   );
 }

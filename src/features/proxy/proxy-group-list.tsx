@@ -49,26 +49,26 @@ export function ProxyGroupList({ data }: { data: ProxiesResponse }) {
   const groups = useMemo(() => parseGroups(data), [data]);
 
   return (
-    <Accordion.Root type="multiple" className="space-y-2">
+    <Accordion.Root type="multiple" className="space-y-4">
       {groups.map(({ group, nodes }) => (
         <Accordion.Item
           key={group.name}
           value={group.name}
-          className="rounded-lg border border-border"
+          className="overflow-hidden rounded-[1.5rem] border border-border/70 bg-background/95 shadow-md"
         >
           <Accordion.Header className="flex">
             <Accordion.Trigger
               className={cn(
-                "flex flex-1 items-center gap-2 px-4 py-3 text-sm font-medium",
+                "flex flex-1 items-center gap-2 px-5 py-4 text-base font-semibold",
                 "hover:bg-muted/50 [&[data-state=open]>svg.chevron]:rotate-180",
               )}
             >
               <ChevronDown className="chevron size-4 shrink-0 text-muted-foreground transition-transform" />
               <span>{group.name}</span>
-              <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+              <span className="rounded-full border border-primary/15 bg-primary/10 px-1.5 py-0.5 text-xs text-primary">
                 {group.type}
               </span>
-              <span className="ml-auto mr-2 truncate text-xs text-muted-foreground">
+              <span className="ml-auto mr-2 truncate rounded-full bg-muted/40 px-3 py-1 text-xs font-medium text-foreground">
                 {group.now}
               </span>
               <DelayTestButton
@@ -78,7 +78,7 @@ export function ProxyGroupList({ data }: { data: ProxiesResponse }) {
             </Accordion.Trigger>
           </Accordion.Header>
           <Accordion.Content className="overflow-hidden data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-            <div className="grid grid-cols-2 gap-2 px-4 pb-4 md:grid-cols-3">
+            <div className="grid grid-cols-2 gap-3 px-5 pb-5 md:grid-cols-3 lg:grid-cols-4">
               {nodes.map((node) => (
                 <ProxyNodeCard
                   key={node.name}

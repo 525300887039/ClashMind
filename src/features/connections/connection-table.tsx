@@ -1,8 +1,9 @@
 import { useState, useMemo } from "react";
-import { X, Trash2, Search, ArrowUpDown } from "lucide-react";
+import { X, ChevronUp, ChevronDown } from "lucide-react";
 import type { Connection } from "@/lib/tauri-api";
 import { cn, formatBytes } from "@/lib/utils";
-import { useCloseConnection, useCloseAllConnections } from "./hooks/use-connections";
+import { SectionCard } from "@/components/ui/section-card";
+import { useCloseConnection } from "./hooks/use-connections";
 
 type SortKey = "host" | "network" | "type" | "chains" | "rule" | "download" | "upload" | "start";
 type SortDir = "asc" | "desc";
@@ -39,12 +40,15 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: "start", label: "耗时" },
 ];
 
-export function ConnectionTable({ connections }: { connections: Connection[] }) {
-  const [search, setSearch] = useState("");
+interface ConnectionTableProps {
+  connections: Connection[];
+  search: string;
+}
+
+export function ConnectionTable({ connections, search }: ConnectionTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>("start");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const closeConn = useCloseConnection();
-  const closeAll = useCloseAllConnections();
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -71,65 +75,60 @@ export function ConnectionTable({ connections }: { connections: Connection[] }) 
     });
   }, [connections, search, sortKey, sortDir]);
 
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-3 text-sm outline-none focus:ring-1 focus:ring-ring"
-            placeholder="搜索 Host..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+  if (filtered.length === 0) {
+    return (
+      <SectionCard>
+        <div className="px-5 py-10 text-center text-sm text-muted-foreground">
+          {search ? "没有匹配的连接" : "暂无活跃连接"}
         </div>
-        <button
-          className="flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-sm text-destructive hover:bg-destructive/10"
-          onClick={() => closeAll.mutate()}
-        >
-          <Trash2 className="size-3.5" />
-          关闭全部
-        </button>
-      </div>
+      </SectionCard>
+    );
+  }
 
-      <div className="overflow-auto rounded-lg border border-border">
+  return (
+    <SectionCard className="p-0">
+      <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-border bg-muted/50">
+            <tr className="border-b border-border/70 bg-muted/45">
               {COLUMNS.map((col) => (
                 <th
                   key={col.key}
-                  className="cursor-pointer whitespace-nowrap px-3 py-2 text-left font-medium text-muted-foreground hover:text-foreground"
+                  className="cursor-pointer select-none px-5 py-3 text-left text-xs font-medium tracking-wide text-muted-foreground uppercase"
                   onClick={() => handleSort(col.key)}
                 >
                   <span className="inline-flex items-center gap-1">
                     {col.label}
-                    {sortKey === col.key && (
-                      <ArrowUpDown className="size-3" />
-                    )}
+                    {sortKey === col.key ? (
+                      sortDir === "asc" ? (
+                        <ChevronUp className="size-3.5" />
+                      ) : (
+                        <ChevronDown className="size-3.5" />
+                      )
+                    ) : null}
                   </span>
                 </th>
               ))}
-              <th className="px-3 py-2 text-left font-medium text-muted-foreground">操作</th>
+              <th className="px-5 py-3" />
             </tr>
           </thead>
           <tbody>
             {filtered.map((conn) => (
               <tr
                 key={conn.id}
-                className="border-b border-border last:border-0 hover:bg-muted/30"
+                className="border-b border-border/60 transition-colors even:bg-muted/20 hover:bg-muted/35"
               >
-                <td className="max-w-[200px] truncate px-3 py-2">
+                <td className="max-w-[200px] truncate px-5 py-3">
                   {conn.metadata.host || conn.metadata.destinationIP}
                 </td>
-                <td className="px-3 py-2">{conn.metadata.network}</td>
-                <td className="px-3 py-2">{conn.metadata.type}</td>
-                <td className="max-w-[150px] truncate px-3 py-2">{conn.chains.join(" > ")}</td>
-                <td className="px-3 py-2">{conn.rule}</td>
-                <td className="px-3 py-2 text-success">{formatBytes(conn.download)}</td>
-                <td className="px-3 py-2 text-warning">{formatBytes(conn.upload)}</td>
-                <td className="px-3 py-2">{formatDuration(conn.start)}</td>
-                <td className="px-3 py-2">
+                <td className="px-5 py-3">{conn.metadata.network}</td>
+                <td className="px-5 py-3">{conn.metadata.type}</td>
+                <td className="max-w-[150px] truncate px-5 py-3">{conn.chains.join(" > ")}</td>
+                <td className="px-5 py-3">{conn.rule}</td>
+                <td className="px-5 py-3 text-success">{formatBytes(conn.download)}</td>
+                <td className="px-5 py-3 text-warning">{formatBytes(conn.upload)}</td>
+                <td className="px-5 py-3">{formatDuration(conn.start)}</td>
+                <td className="px-5 py-3">
                   <button
                     className={cn(
                       "rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive",
@@ -144,6 +143,6 @@ export function ConnectionTable({ connections }: { connections: Connection[] }) 
           </tbody>
         </table>
       </div>
-    </div>
+    </SectionCard>
   );
 }

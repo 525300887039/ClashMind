@@ -13,7 +13,7 @@ import { cn, formatBytes } from "@/lib/utils";
 import { ChartEmptyState } from "./components/chart-empty-state";
 import { HighlightCard } from "./components/highlight-card";
 import { RangeSelector } from "./components/range-selector";
-import { StatusBadge } from "./components/status-badge";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { SummaryCard } from "./components/summary-card";
 import { TableSkeleton } from "./components/table-skeleton";
 import { getRangeCaption, integerFormatter, type StatsRange } from "./constants";
@@ -474,7 +474,7 @@ export function GeoMap() {
                     key={`${stat.countryCode}-${stat.country}`}
                     className={cn(
                       "border-b border-border/60 transition hover:bg-muted/35",
-                      index % 2 === 0 ? "bg-background" : "bg-muted/10",
+                      index % 2 === 0 ? "bg-background" : "bg-muted/20",
                     )}
                   >
                     <td className="px-5 py-3 font-medium text-foreground">{index + 1}</td>

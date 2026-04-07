@@ -1,8 +1,10 @@
 import { useState, useEffect, lazy, Suspense } from "react";
-import { Save, RotateCw } from "lucide-react";
+import { FileCog, Save, RotateCw, Loader2 } from "lucide-react";
+import { motion } from "framer-motion";
 import { toast, Toaster } from "sonner";
 import { api } from "@/lib/tauri-api";
 import { useAppStore } from "@/stores/app-store";
+import { PageHeader, SectionCard, ActionButton } from "@/components/ui";
 import { useReadConfig, useWriteConfig, useReloadConfig } from "./hooks/use-config";
 
 const ConfigEditor = lazy(() =>
@@ -48,39 +50,79 @@ export function ConfigPage() {
     }
   };
 
-  if (isLoading) {
-    return <div className="p-4 text-sm text-muted-foreground">加载中...</div>;
-  }
+  const saving = isSnapshotting || writeMut.isPending || reloadMut.isPending;
 
-  if (error) {
+  if (isLoading) {
     return (
-      <div className="p-4 text-sm text-destructive">
-        加载失败: {error.message}
+      <div className="flex h-full items-center justify-center">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" />
+          加载配置中...
+        </div>
       </div>
     );
   }
 
-  const saving = isSnapshotting || writeMut.isPending || reloadMut.isPending;
+  if (error) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <p className="text-sm text-destructive">加载失败: {error.message}</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex h-full flex-col">
+    <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.24, ease: "easeOut" }} className="flex h-full flex-col gap-6">
       <Toaster position="top-center" richColors />
-      <div className="flex items-center justify-between border-b border-border px-4 py-2">
-        <span className="text-sm text-muted-foreground">{configPath}</span>
-        <button
-          disabled={!dirty || saving}
-          onClick={handleSave}
-          className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+
+      <PageHeader
+        eyebrow="Config Editor"
+        eyebrowIcon={FileCog}
+        title="配置"
+        description="编辑 mihomo 核心配置文件，保存后自动重载生效"
+        actions={
+          <>
+            <span className="rounded-full border border-border/70 bg-muted/30 px-3 py-1.5 text-xs font-mono text-muted-foreground">
+              {configPath}
+            </span>
+
+            {dirty && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-amber-500">
+                <span className="size-2 rounded-full bg-amber-500" />
+                已修改
+              </span>
+            )}
+
+            <ActionButton
+              tone="primary"
+              disabled={!dirty || saving}
+              onClick={handleSave}
+            >
+              {saving ? (
+                <RotateCw className="size-3.5 animate-spin" />
+              ) : (
+                <Save className="size-3.5" />
+              )}
+              {saving ? "保存中..." : "保存并重载"}
+            </ActionButton>
+          </>
+        }
+      />
+
+      <SectionCard className="min-h-0 flex-1 overflow-hidden p-0">
+        <Suspense
+          fallback={
+            <div className="flex h-full items-center justify-center">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                编辑器加载中...
+              </div>
+            </div>
+          }
         >
-          {saving ? <RotateCw size={14} className="animate-spin" /> : <Save size={14} />}
-          {saving ? "保存中..." : "保存并重载"}
-        </button>
-      </div>
-      <div className="flex-1">
-        <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">编辑器加载中...</div>}>
           <ConfigEditor value={content} onChange={handleChange} />
         </Suspense>
-      </div>
-    </div>
+      </SectionCard>
+    </motion.section>
   );
 }

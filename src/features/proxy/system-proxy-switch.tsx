@@ -34,12 +34,18 @@ export function SystemProxySwitch() {
     <button
       onClick={() => toggle.mutate({ enable: !enabled, port })}
       className={cn(
-        "ml-auto flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors",
+        "ml-auto flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
         enabled
-          ? "border-primary/30 bg-primary/10 text-primary"
+          ? "border-primary/30 bg-primary/10 text-primary shadow-[0_4px_16px_-8px_var(--color-primary)]"
           : "border-border text-muted-foreground hover:text-foreground",
       )}
     >
+      <span
+        className={cn(
+          "size-2 rounded-full",
+          enabled ? "bg-primary/80" : "bg-muted-foreground/40",
+        )}
+      />
       {enabled ? <Shield className="size-3.5" /> : <ShieldOff className="size-3.5" />}
       {enabled ? "系统代理已开启" : "系统代理已关闭"}
     </button>

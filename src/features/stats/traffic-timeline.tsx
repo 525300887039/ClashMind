@@ -24,7 +24,7 @@ import type { TrafficPoint } from "@/lib/tauri-api";
 import { cn, formatBytes } from "@/lib/utils";
 import { ChartEmptyState } from "./components/chart-empty-state";
 import { HighlightCard } from "./components/highlight-card";
-import { StatusBadge } from "./components/status-badge";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { SummaryCard } from "./components/summary-card";
 import { integerFormatter } from "./constants";
 import { useTrafficDaily, useTrafficHourly } from "./hooks/use-stats";
@@ -371,7 +371,7 @@ export function TrafficTimeline() {
                 左轴为流量，右轴为连接数，悬浮可查看精确字节值。
               </p>
             </div>
-            <StatusBadge busy={activeQuery.isFetching || isPending} idleLabel={refreshLabel} />
+            <StatusBadge busy={activeQuery.isFetching || isPending} readyText={refreshLabel} />
           </div>
 
           <div className="h-[32rem] px-2 pb-4 pt-2">

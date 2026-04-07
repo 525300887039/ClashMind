@@ -32,15 +32,15 @@ export function ProxyNodeCard({
       type="button"
       onClick={onSelect}
       className={cn(
-        "flex flex-col gap-1 rounded-md border px-3 py-2 text-left text-sm transition-colors",
+        "flex flex-col gap-1 rounded-xl border px-3.5 py-2.5 text-left text-sm transition-colors",
         selected
-          ? "border-primary bg-accent ring-1 ring-primary"
-          : "border-border bg-muted/30 hover:bg-muted/60",
+          ? "border-primary/40 bg-primary/8 ring-1 ring-primary/20 shadow-[0_8px_24px_-12px_var(--color-primary)]"
+          : "border-border/70 bg-background/80 shadow-sm hover:border-primary/20 hover:bg-muted/30",
       )}
     >
       <span className="truncate font-medium">{name}</span>
       <div className="flex items-center justify-between">
-        <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+        <span className="rounded-full border border-border/60 bg-muted/40 px-1.5 py-0.5 text-xs text-muted-foreground">
           {type}
         </span>
         <span className={cn("text-xs font-mono", getDelayColor(delay))}>

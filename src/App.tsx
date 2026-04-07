@@ -45,7 +45,7 @@ function AppContent() {
         </p>
         <button
           onClick={setupAndStart}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
         >
           创建默认配置并启动
         </button>
@@ -59,7 +59,7 @@ function AppContent() {
         <p className="text-sm text-destructive">启动失败: {error}</p>
         <button
           onClick={retry}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
         >
           重试
         </button>

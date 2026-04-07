@@ -32,15 +32,15 @@ export function ProxyModeSwitch() {
   const patchMode = usePatchMode();
 
   return (
-    <div className="flex items-center gap-1 rounded-lg border border-border bg-muted/30 p-1">
+    <div className="flex items-center gap-1 rounded-full border border-border/70 bg-muted/30 p-1">
       {MODES.map(({ value, label, icon: Icon }) => (
         <button
           key={value}
           onClick={() => patchMode.mutate(value)}
           className={cn(
-            "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors",
+            "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition-colors",
             currentMode === value
-              ? "bg-background text-foreground shadow-sm"
+              ? "bg-primary text-primary-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",
           )}
         >

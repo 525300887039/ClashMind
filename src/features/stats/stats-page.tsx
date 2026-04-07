@@ -5,7 +5,6 @@ import {
   Globe,
   LayoutDashboard,
   MapPinned,
-  RefreshCw,
 } from "lucide-react";
 import { useStatsOverview } from "@/features/stats/hooks/use-stats";
 import { cn, formatBytes } from "@/lib/utils";
@@ -13,6 +12,8 @@ import { integerFormatter } from "./constants";
 import { DomainStats } from "./domain-stats";
 import { GeoMap } from "./geo-map";
 import { TrafficTimeline } from "./traffic-timeline";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusBadge } from "@/components/ui/status-badge";
 
 type StatsTab = "overview" | "domains" | "traffic" | "geo";
 
@@ -56,38 +57,14 @@ export function StatsPage() {
 
   return (
     <section className="flex flex-col gap-6">
-      <header className="relative overflow-hidden rounded-[2rem] border border-border/70 bg-linear-to-br from-primary/12 via-background to-background p-6 shadow-[0_28px_100px_-45px_rgba(15,23,42,0.6)]">
-        <div className="pointer-events-none absolute -right-10 top-0 size-40 rounded-full bg-primary/12 blur-3xl" />
-        <div className="pointer-events-none absolute bottom-0 left-0 h-24 w-52 bg-linear-to-r from-primary/10 to-transparent" />
-        <div className="relative flex flex-col gap-6">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-            <div className="max-w-3xl">
-              <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/10 px-3 py-1 text-xs font-medium tracking-[0.18em] text-primary uppercase">
-                <ChartNoAxesCombined className="size-3.5" />
-                Traffic Observatory
-              </div>
-              <h1 className="mt-4 text-3xl font-semibold tracking-tight text-foreground">
-                统计仪表板
-              </h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                聚合域名、流量与地理维度的数据采样。当前已接入域名分析、流量趋势和地理分布，可以从同一窗口快速定位带宽热点。
-              </p>
-            </div>
-
-            <div
-              className={cn(
-                "inline-flex items-center gap-2 self-start rounded-full border px-3 py-1.5 text-xs font-medium",
-                isPending
-                  ? "border-primary/20 bg-primary/10 text-primary"
-                  : "border-border bg-muted/50 text-muted-foreground",
-              )}
-            >
-              <RefreshCw className={cn("size-3.5", isPending && "animate-spin")} />
-              {isPending ? "切换中" : "视图已就绪"}
-            </div>
-          </div>
-
-          <div className="grid gap-3 lg:grid-cols-4">
+      <PageHeader
+        eyebrow="Traffic Observatory"
+        eyebrowIcon={ChartNoAxesCombined}
+        title="统计仪表板"
+        description="聚合域名、流量与地理维度的数据采样。当前已接入域名分析、流量趋势和地理分布，可以从同一窗口快速定位带宽热点。"
+        actions={<StatusBadge busy={isPending} busyText="切换中" readyText="视图已就绪" />}
+      >
+        <div className="grid gap-3 lg:grid-cols-4">
             {STATS_TABS.map(({ id, label, description, icon: Icon }) => {
               const isActive = id === activeTab;
 
@@ -131,8 +108,7 @@ export function StatsPage() {
               );
             })}
           </div>
-        </div>
-      </header>
+      </PageHeader>
 
       {activeTab === "overview" && <StatsOverviewPanel />}
       {activeTab === "domains" && <DomainStats />}
@@ -209,7 +185,7 @@ function StatsOverviewPanel() {
         />
       </div>
 
-      <aside className="rounded-[1.75rem] border border-border/70 bg-background/95 p-5 shadow-[0_24px_80px_-40px_rgba(15,23,42,0.45)]">
+      <aside className="rounded-[1.5rem] border border-border/70 bg-background/95 p-5 shadow-[0_24px_80px_-40px_rgba(15,23,42,0.45)]">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-xs font-medium tracking-[0.18em] text-muted-foreground uppercase">
@@ -219,17 +195,7 @@ function StatsOverviewPanel() {
               网络活动概况
             </h2>
           </div>
-          <div
-            className={cn(
-              "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium",
-              isFetching
-                ? "border-primary/20 bg-primary/10 text-primary"
-                : "border-border bg-muted/40 text-muted-foreground",
-            )}
-          >
-            <RefreshCw className={cn("size-3.5", isFetching && "animate-spin")} />
-            {isFetching ? "刷新中" : "自动刷新 60s"}
-          </div>
+          <StatusBadge busy={isFetching} />
         </div>
 
         <div className="mt-6 space-y-4">
@@ -285,7 +251,7 @@ function OverviewCard({
   return (
     <article
       className={cn(
-        "rounded-[1.75rem] border border-border/70 bg-linear-to-br p-5 shadow-[0_24px_80px_-40px_rgba(15,23,42,0.45)]",
+        "rounded-[1.5rem] border border-border/70 bg-linear-to-br p-5 shadow-[0_24px_80px_-40px_rgba(15,23,42,0.45)]",
         toneClassName,
       )}
     >

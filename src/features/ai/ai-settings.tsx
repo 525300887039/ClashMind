@@ -24,6 +24,8 @@ import { toast } from "sonner";
 import type { AiModelCatalogSource, AiProviderKind, AiSettings as AiSettingsValue } from "@/lib/tauri-api";
 import { normalizeErrorMessage } from "@/lib/error";
 import { cn } from "@/lib/utils";
+import { ActionButton } from "@/components/ui/action-button";
+import { FieldShell } from "@/components/ui/field-shell";
 import {
   DEFAULT_AI_SETTINGS,
   getModelCatalogBlockingReason,
@@ -82,21 +84,21 @@ function connectionTone(
   }
 
   return success
-    ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
-    : "border-rose-500/20 bg-rose-500/10 text-rose-200";
+    ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-200"
+    : "border-rose-500/20 bg-rose-500/10 text-rose-600 dark:text-rose-200";
 }
 
 function modelCatalogTone(hasBlockingReason: boolean, source: AiModelCatalogSource | undefined) {
   if (hasBlockingReason || source === "empty") {
-    return "border-amber-500/20 bg-amber-500/10 text-amber-200";
+    return "border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-200";
   }
 
   if (source === "fallback") {
-    return "border-sky-500/20 bg-sky-500/10 text-sky-200";
+    return "border-sky-500/20 bg-sky-500/10 text-sky-600 dark:text-sky-200";
   }
 
   if (source === "remote") {
-    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-200";
+    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-200";
   }
 
   return "border-border/70 bg-background/70 text-muted-foreground";
@@ -188,58 +190,6 @@ function SelectItem({
         <Check className="size-3.5" />
       </Select.ItemIndicator>
     </Select.Item>
-  );
-}
-
-function ActionButton({
-  tone = "primary",
-  disabled,
-  onClick,
-  children,
-}: {
-  tone?: "primary" | "secondary" | "ghost";
-  disabled?: boolean;
-  onClick?: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-full border px-4 py-2.5 text-sm font-medium transition-all",
-        tone === "primary" &&
-          "border-primary/20 bg-primary text-primary-foreground shadow-[0_18px_42px_-24px_var(--color-primary)] hover:translate-y-[-1px] hover:bg-primary/92",
-        tone === "secondary" &&
-          "border-border/70 bg-background/80 text-foreground hover:border-primary/20 hover:bg-primary/5",
-        tone === "ghost" &&
-          "border-border/70 bg-transparent text-muted-foreground hover:border-primary/20 hover:text-foreground",
-        "disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-function FieldShell({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="rounded-[1.45rem] border border-border/70 bg-background/68 p-4">
-      <div className="text-[11px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
-        {label}
-      </div>
-      {hint ? <p className="mt-2 text-sm leading-6 text-muted-foreground">{hint}</p> : null}
-      <div className={cn(hint ? "mt-4" : "mt-3")}>{children}</div>
-    </label>
   );
 }
 
@@ -422,7 +372,7 @@ export function AiSettingsPanel() {
 
   if (settingsQuery.error) {
     return (
-      <section className="rounded-[2rem] border border-rose-500/20 bg-rose-500/10 p-6 text-sm text-rose-200">
+      <section className="rounded-[2rem] border border-rose-500/20 bg-rose-500/10 p-6 text-sm text-rose-600 dark:text-rose-200">
         读取 AI 设置失败: {settingsQuery.error.message}
       </section>
     );
@@ -459,7 +409,7 @@ export function AiSettingsPanel() {
               className={cn(
                 "inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-medium tracking-[0.18em] uppercase",
                 service.isRunning
-                  ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200"
+                  ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-200"
                   : "border-border/70 bg-background/75 text-muted-foreground",
               )}
             >
@@ -477,7 +427,7 @@ export function AiSettingsPanel() {
                 "inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-medium tracking-[0.18em] uppercase",
                 isConfigured
                   ? "border-primary/20 bg-primary/10 text-primary"
-                  : "border-amber-500/20 bg-amber-500/10 text-amber-200",
+                  : "border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-200",
               )}
             >
               <PlugZap className="size-3.5" />
@@ -697,7 +647,7 @@ export function AiSettingsPanel() {
                       className={cn(
                         "inline-flex size-12 items-center justify-center rounded-[1rem] border",
                         service.isRunning
-                          ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-300"
+                          ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
                           : "border-border/70 bg-background/75 text-muted-foreground",
                       )}
                     >

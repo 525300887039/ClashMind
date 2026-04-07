@@ -10,6 +10,7 @@ import { isAiConfigured, useAiSettingsQuery } from "./hooks/use-ai-settings";
 import { SnapshotList } from "./snapshot-list";
 import { useAppStore } from "@/stores/app-store";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/ui/page-header";
 
 const CAPABILITY_CARDS = [
   {
@@ -66,26 +67,13 @@ export function ChatPanel() {
     >
       <Toaster position="top-center" richColors />
 
-      <header className="relative overflow-hidden rounded-[2rem] border border-border/70 bg-linear-to-br from-primary/14 via-background to-background p-6 shadow-[0_28px_100px_-50px_rgba(15,23,42,0.65)]">
-        <div className="pointer-events-none absolute -right-10 top-0 size-40 rounded-full bg-primary/12 blur-3xl" />
-        <div className="pointer-events-none absolute bottom-0 left-0 h-24 w-56 bg-linear-to-r from-primary/10 to-transparent" />
-
-        <div className="relative flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/10 px-3 py-1 text-xs font-medium tracking-[0.18em] text-primary uppercase">
-              <Sparkles className="size-3.5" />
-              Conversational Config Copilot
-            </div>
-
-            <h1 className="mt-4 text-3xl font-semibold tracking-tight text-foreground">
-              AI 助手
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-              让对话、统计报告和配置协作在同一个工作面板里展开。左侧处理流式会话与工具轨迹，右侧固定为 AI 统计报告工作台，适合先读信号、再落动作。
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
+      <PageHeader
+        eyebrow="Conversational Config Copilot"
+        eyebrowIcon={Sparkles}
+        title="AI 助手"
+        description="让对话、统计报告和配置协作在同一个工作面板里展开。左侧处理流式会话与工具轨迹，右侧固定为 AI 统计报告工作台，适合先读信号、再落动作。"
+        actions={
+          <>
             <span className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/70 px-3 py-2 text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase">
               <Bot className="size-3.5 text-primary" />
               {modelBadgeLabel}
@@ -113,9 +101,9 @@ export function ChatPanel() {
               <Settings2 className="size-4" />
               设置
             </button>
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1.06fr)_minmax(24rem,0.94fr)]">
         <div className="flex min-h-0 flex-col overflow-hidden rounded-[2rem] border border-border/70 bg-background/95 shadow-[0_28px_100px_-52px_rgba(15,23,42,0.55)]">
@@ -205,7 +193,7 @@ export function ChatPanel() {
                   initial={{ opacity: 0, x: 18 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.08 * index, duration: 0.24, ease: "easeOut" }}
-                  className="relative overflow-hidden rounded-[1.75rem] border border-border/70 bg-linear-to-br from-background to-muted/20 p-5 shadow-[0_24px_90px_-50px_rgba(15,23,42,0.45)]"
+                  className="relative overflow-hidden rounded-[1.5rem] border border-border/70 bg-linear-to-br from-background to-muted/20 p-5 shadow-[0_24px_90px_-50px_rgba(15,23,42,0.45)]"
                 >
                   <div className="pointer-events-none absolute -right-8 top-0 size-24 rounded-full bg-primary/10 blur-3xl" />
                   <div className="relative">
