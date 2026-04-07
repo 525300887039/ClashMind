@@ -71,16 +71,20 @@ impl BatchBuffer {
 
     /// Restores a drained batch after a failed persistence attempt.
     pub fn restore(&mut self, mut records: Vec<ConnectionRecord>) {
-        for r in &records {
-            self.buffered_ids.insert(r.id.clone());
-        }
-
         if self.buffer.is_empty() {
+            self.buffered_ids.clear();
+            for r in &records {
+                self.buffered_ids.insert(r.id.clone());
+            }
             self.buffer = records;
             return;
         }
 
         records.append(&mut self.buffer);
+        self.buffered_ids.clear();
+        for r in &records {
+            self.buffered_ids.insert(r.id.clone());
+        }
         self.buffer = records;
     }
 

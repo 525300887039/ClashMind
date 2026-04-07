@@ -75,9 +75,12 @@ function createId() {
   return crypto.randomUUID();
 }
 
-function omitKey<T extends Record<string, unknown>>(obj: T, key: string): T {
+function omitKey<T extends Record<string, unknown>, K extends string>(
+  obj: T,
+  key: K,
+): Omit<T, K> {
   const { [key]: _, ...rest } = obj;
-  return rest as T;
+  return rest as Omit<T, K>;
 }
 
 export const useAiStore = create<AiStore>()((set, get) => ({
@@ -250,9 +253,14 @@ export const useAiStore = create<AiStore>()((set, get) => ({
     set((state) => ({
       configApplyPayloads: omitKey(state.configApplyPayloads, confirmationBatchId),
     })),
-  setLoading: (isLoading) => set({ isLoading }),
-  setError: (error) => set({ error }),
-  setActiveStreamMessageId: (activeStreamMessageId) => set({ activeStreamMessageId }),
+  setLoading: (isLoading) =>
+    set((state) => (state.isLoading === isLoading ? state : { isLoading })),
+  setError: (error) =>
+    set((state) => (state.error === error ? state : { error })),
+  setActiveStreamMessageId: (activeStreamMessageId) =>
+    set((state) =>
+      state.activeStreamMessageId === activeStreamMessageId ? state : { activeStreamMessageId },
+    ),
   clearMessages: () =>
     set({
       messages: [],

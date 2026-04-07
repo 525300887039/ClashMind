@@ -304,9 +304,14 @@ export function AiSettingsPanel() {
     modelCatalogQuery.error?.message ??
     modelCatalogQuery.data?.message ??
     "修改 Provider、API Key 或 Base URL 后会自动获取可用模型。";
+  const normalizedDraft = useMemo(() => normalizeAiSettings(draft), [draft]);
+  const normalizedCurrent = useMemo(
+    () => normalizeAiSettings(currentSettings),
+    [currentSettings],
+  );
   const isDirty = useMemo(() => {
-    const a = normalizeAiSettings(draft);
-    const b = normalizeAiSettings(currentSettings);
+    const a = normalizedDraft;
+    const b = normalizedCurrent;
     return (
       a.provider !== b.provider ||
       a.model !== b.model ||
@@ -316,7 +321,7 @@ export function AiSettingsPanel() {
       a.maxTokens !== b.maxTokens ||
       a.autoStart !== b.autoStart
     );
-  }, [draft, currentSettings]);
+  }, [normalizedDraft, normalizedCurrent]);
   const connectionResult = connectionTestMutation.data;
   const connectionError = connectionTestMutation.error;
   const connectionMessage = connectionError?.message ?? connectionResult?.message ?? "";

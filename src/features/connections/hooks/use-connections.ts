@@ -8,7 +8,7 @@ export function useConnections() {
     queryKey: CONNECTIONS_KEYS.all,
     queryFn: api.connection.getAll,
     refetchInterval: 1000,
-    staleTime: 500,
+    staleTime: 1000,
   });
 }
 
