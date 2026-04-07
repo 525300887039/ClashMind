@@ -15,7 +15,6 @@ use std::{
 };
 
 use chrono::{DateTime, Duration as ChronoDuration, DurationRound, Utc};
-use serde::Serialize;
 use tauri::{async_runtime::JoinHandle, AppHandle, Runtime};
 use thiserror::Error;
 use tokio::{
@@ -338,14 +337,7 @@ pub enum CollectorError {
     TaskJoin(String),
 }
 
-impl Serialize for CollectorError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
+crate::utils::impl_serialize_display!(CollectorError);
 
 #[cfg(test)]
 mod tests {

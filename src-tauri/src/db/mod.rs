@@ -8,7 +8,6 @@ pub mod repo_geoip;
 pub mod repo_snapshot;
 pub mod repo_traffic;
 
-use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_sql::{DbInstances, DbPool};
@@ -32,14 +31,7 @@ pub enum DbError {
     QueryFailed(String),
 }
 
-impl Serialize for DbError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
+crate::utils::impl_serialize_display!(DbError);
 
 pub async fn get_db_pool<R: Runtime>(app: &AppHandle<R>) -> Result<DbPool, DbError> {
     let instances = app.state::<DbInstances>();

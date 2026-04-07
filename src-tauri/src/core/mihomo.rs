@@ -12,14 +12,7 @@ pub enum MihomoError {
     Api(String),
 }
 
-impl Serialize for MihomoError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
+crate::utils::impl_serialize_display!(MihomoError);
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DelayHistory {

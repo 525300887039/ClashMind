@@ -8,21 +8,7 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_sql::DbPool;
 use thiserror::Error;
 
-/// Serialize any `Display` error type as its string representation for Tauri IPC.
-macro_rules! impl_serialize_display {
-    ($($ty:ty),+ $(,)?) => {
-        $(
-            impl Serialize for $ty {
-                fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-                where
-                    S: serde::Serializer,
-                {
-                    serializer.serialize_str(&self.to_string())
-                }
-            }
-        )+
-    };
-}
+use crate::utils::impl_serialize_display;
 
 use crate::{
     core::{

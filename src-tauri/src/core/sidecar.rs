@@ -14,6 +14,8 @@ use tauri_plugin_shell::ShellExt;
 use thiserror::Error;
 use tokio::sync::oneshot;
 
+use crate::utils::impl_serialize_display;
+
 use super::ai_callback::{self, AiCallbackRequest};
 
 const AI_READY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -38,14 +40,7 @@ pub enum SidecarError {
     KillFailed(String),
 }
 
-impl Serialize for SidecarError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
+impl_serialize_display!(SidecarError);
 
 pub struct SidecarState {
     pub child: Mutex<Option<CommandChild>>,
@@ -114,14 +109,7 @@ pub enum AiSidecarError {
     RequestCancelled,
 }
 
-impl Serialize for AiSidecarError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
+impl_serialize_display!(AiSidecarError);
 
 #[derive(Serialize)]
 struct JsonRpcRequest<'a> {

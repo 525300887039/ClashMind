@@ -1,6 +1,5 @@
 use crate::core::mihomo::MihomoError;
 use crate::utils::path::expand_tilde;
-use serde::Serialize;
 use thiserror::Error;
 
 use super::MihomoState;
@@ -13,14 +12,7 @@ pub enum ConfigError {
     ReloadFailed(#[from] MihomoError),
 }
 
-impl Serialize for ConfigError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
+crate::utils::impl_serialize_display!(ConfigError);
 
 #[tauri::command]
 pub async fn read_config(path: String) -> Result<String, ConfigError> {

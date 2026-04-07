@@ -1,4 +1,3 @@
-use serde::Serialize;
 use sysproxy::Sysproxy;
 use thiserror::Error;
 
@@ -10,14 +9,7 @@ pub enum SysproxyError {
     GetFailed(String),
 }
 
-impl Serialize for SysproxyError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
+crate::utils::impl_serialize_display!(SysproxyError);
 
 pub fn set_system_proxy(enable: bool, host: &str, port: u16) -> Result<(), SysproxyError> {
     if enable {
