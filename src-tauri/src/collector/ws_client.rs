@@ -3,7 +3,7 @@ use std::{collections::HashMap, time::Duration};
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use tauri::{AppHandle, Manager, Runtime};
 use tokio::{
     sync::watch,
@@ -77,7 +77,7 @@ impl Eq for ConnectionRecord {}
 
 #[derive(Debug, Deserialize)]
 struct ConnectionsSnapshot {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     connections: Vec<RawConnection>,
 }
 
@@ -91,7 +91,7 @@ struct RawConnection {
     download: i64,
     #[serde(default)]
     start: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     chains: Vec<String>,
     #[serde(default)]
     rule: String,
@@ -115,6 +115,14 @@ struct RawMetadata {
     network: String,
     #[serde(rename = "type", default)]
     conn_type: String,
+}
+
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Option::<T>::deserialize(deserializer).map(|value| value.unwrap_or_default())
 }
 
 #[derive(Debug, Default)]
@@ -1264,6 +1272,41 @@ mod tests {
         };
 
         assert_eq!(url, "wss://example.com/connections");
+    }
+
+    #[test]
+    fn connections_snapshot_treats_null_connections_as_empty() {
+        let payload = r#"{"downloadTotal":0,"uploadTotal":0,"connections":null}"#;
+
+        let snapshot = serde_json::from_str::<ConnectionsSnapshot>(payload);
+
+        assert!(snapshot.is_ok());
+        let Ok(snapshot) = snapshot else {
+            panic!("snapshot with null connections should deserialize");
+        };
+        assert!(snapshot.connections.is_empty());
+    }
+
+    #[test]
+    fn raw_connection_treats_null_chains_as_empty() {
+        let payload = r#"{
+            "id":"conn-1",
+            "metadata":{"host":"example.com"},
+            "upload":0,
+            "download":0,
+            "start":"2026-03-30T10:00:00Z",
+            "chains":null,
+            "rule":"MATCH",
+            "rulePayload":null
+        }"#;
+
+        let raw = serde_json::from_str::<RawConnection>(payload);
+
+        assert!(raw.is_ok());
+        let Ok(raw) = raw else {
+            panic!("raw connection with null chains should deserialize");
+        };
+        assert!(raw.chains.is_empty());
     }
 
     #[test]
