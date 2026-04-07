@@ -86,9 +86,13 @@ impl AiChatRole {
 pub struct AiProviderSettings {
     pub provider: AiProviderKind,
     pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
 }
 
@@ -96,7 +100,9 @@ pub struct AiProviderSettings {
 #[serde(rename_all = "camelCase")]
 pub struct AiModelCatalogSettings {
     pub provider: AiProviderKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
 }
 
@@ -230,8 +236,11 @@ pub struct AiChatMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiChatContext {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub current_config: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub recent_stats: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub available_proxies: Option<Vec<String>>,
 }
 
@@ -239,6 +248,7 @@ pub struct AiChatContext {
 #[serde(rename_all = "camelCase")]
 pub struct AiChatParams {
     pub messages: Vec<AiChatMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<AiChatContext>,
     pub settings: AiProviderSettings,
 }
@@ -942,6 +952,25 @@ fn serialize_tool_calls(
         .transpose()
 }
 
+fn build_report_rpc_payload(
+    report_type: ReportType,
+    date: Option<String>,
+    settings: AiProviderSettings,
+) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "type": report_type,
+        "settings": settings,
+    });
+
+    if let Some(date) = date {
+        if let Some(object) = payload.as_object_mut() {
+            object.insert("date".into(), serde_json::Value::String(date));
+        }
+    }
+
+    payload
+}
+
 #[tauri::command]
 pub async fn start_ai_service(
     app: AppHandle,
@@ -1072,11 +1101,7 @@ pub async fn ai_generate_report(
         sidecar::start_ai(&app, &state).await?;
     }
 
-    let payload = serde_json::json!({
-        "type": report_type,
-        "date": date,
-        "settings": settings,
-    });
+    let payload = build_report_rpc_payload(report_type, date, settings);
     let response = sidecar::send_rpc_with_timeout(
         &state,
         "generate_report",
@@ -1260,6 +1285,71 @@ mod tests {
         let provider_settings = settings.to_provider_settings();
 
         assert_eq!(provider_settings.max_tokens, Some(2048));
+    }
+
+    #[test]
+    fn provider_settings_serialization_omits_none_fields() {
+        let payload = serde_json::to_value(AiSettings::default().to_provider_settings());
+
+        assert!(payload.is_ok());
+        let Ok(payload) = payload else {
+            panic!("provider settings should serialize");
+        };
+
+        assert_eq!(
+            payload.get("provider").and_then(serde_json::Value::as_str),
+            Some("openai")
+        );
+        assert!(payload.get("apiKey").is_none());
+        assert!(payload.get("baseUrl").is_none());
+        assert_eq!(
+            payload.get("temperature").and_then(serde_json::Value::as_f64),
+            Some(0.3)
+        );
+        assert_eq!(
+            payload.get("maxTokens").and_then(serde_json::Value::as_u64),
+            Some(4096)
+        );
+    }
+
+    #[test]
+    fn chat_params_serialization_omits_missing_context() {
+        let payload = serde_json::to_value(AiChatParams {
+            messages: vec![AiChatMessage {
+                role: AiChatRole::User,
+                content: "hello".to_string(),
+            }],
+            context: None,
+            settings: AiSettings::default().to_provider_settings(),
+        });
+
+        assert!(payload.is_ok());
+        let Ok(payload) = payload else {
+            panic!("chat params should serialize");
+        };
+
+        assert!(payload.get("context").is_none());
+        let messages = payload.get("messages").and_then(serde_json::Value::as_array);
+        assert!(messages.is_some());
+        let Some(messages) = messages else {
+            panic!("messages should be serialized");
+        };
+        assert_eq!(messages.len(), 1);
+    }
+
+    #[test]
+    fn report_payload_omits_absent_date() {
+        let payload = build_report_rpc_payload(
+            ReportType::Daily,
+            None,
+            AiSettings::default().to_provider_settings(),
+        );
+
+        assert!(payload.get("date").is_none());
+        assert_eq!(
+            payload.get("type").and_then(serde_json::Value::as_str),
+            Some("daily")
+        );
     }
 
     #[test]
