@@ -6,18 +6,13 @@ export const queryClient = new QueryClient({
   },
 });
 
-/** Invalidate runtime config/proxy/rule queries after config changes. */
-export async function invalidateRuntimeQueries(
-  qc: QueryClient,
-  options?: { includeSnapshots?: boolean },
-) {
+/** Invalidate runtime config/proxy/rule/snapshot queries after config changes. */
+export async function invalidateRuntimeQueries(qc: QueryClient) {
   await Promise.all([
     qc.invalidateQueries({ queryKey: ["config"] }),
     qc.invalidateQueries({ queryKey: ["configs"] }),
     qc.invalidateQueries({ queryKey: ["proxies"] }),
     qc.invalidateQueries({ queryKey: ["rules"] }),
-    ...(options?.includeSnapshots
-      ? [qc.invalidateQueries({ queryKey: ["snapshots"] })]
-      : []),
+    qc.invalidateQueries({ queryKey: ["snapshots"] }),
   ]);
 }

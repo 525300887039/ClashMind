@@ -141,6 +141,14 @@ impl Default for AiSettings {
     }
 }
 
+fn non_empty_string(value: &str) -> Option<String> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
 impl AiSettings {
     fn normalized(mut self) -> Self {
         self.api_key = self.api_key.trim().to_string();
@@ -186,8 +194,8 @@ impl AiSettings {
         AiProviderSettings {
             provider: self.provider.clone(),
             model: self.model.clone(),
-            api_key: (!self.api_key.is_empty()).then(|| self.api_key.clone()),
-            base_url: (!self.base_url.is_empty()).then(|| self.base_url.clone()),
+            api_key: non_empty_string(&self.api_key),
+            base_url: non_empty_string(&self.base_url),
             temperature: Some(self.temperature),
             max_tokens: Some(self.max_tokens),
         }
@@ -196,8 +204,8 @@ impl AiSettings {
     fn to_model_catalog_settings(&self) -> AiModelCatalogSettings {
         AiModelCatalogSettings {
             provider: self.provider.clone(),
-            api_key: (!self.api_key.is_empty()).then(|| self.api_key.clone()),
-            base_url: (!self.base_url.is_empty()).then(|| self.base_url.clone()),
+            api_key: non_empty_string(&self.api_key),
+            base_url: non_empty_string(&self.base_url),
         }
     }
 }

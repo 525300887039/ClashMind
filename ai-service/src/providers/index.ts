@@ -202,6 +202,10 @@ async function listGeminiModels(
   return uniqueModelIds(models);
 }
 
+function providerRequiresApiKey(provider: ProviderId): boolean {
+  return provider === "openai" || provider === "claude" || provider === "gemini";
+}
+
 export async function listModels(settings: ModelCatalogSettings): Promise<ModelCatalogResult> {
   const provider = settings.provider;
   const apiKey = normalizeOptionalString(settings.apiKey);
@@ -215,7 +219,7 @@ export async function listModels(settings: ModelCatalogSettings): Promise<ModelC
     };
   }
 
-  if ((provider === "openai" || provider === "claude" || provider === "gemini") && !apiKey) {
+  if (providerRequiresApiKey(provider) && !apiKey) {
     return createFallbackCatalog(provider, "缺少 API Key，无法自动获取模型");
   }
 

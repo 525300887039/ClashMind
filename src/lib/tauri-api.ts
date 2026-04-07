@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isRecord } from "./utils";
 
 export interface ProxyNode {
   name: string;
@@ -272,10 +273,6 @@ export type AiStreamEvent =
   | { type: "tool_result"; id: string; content: unknown }
   | { type: "error"; message: string }
   | { type: "done"; tokensUsed?: number };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function isConfigChangeAction(value: unknown): value is ConfigChangeAction {
   return typeof value === "string" && CONFIG_CHANGE_ACTIONS.includes(value as ConfigChangeAction);

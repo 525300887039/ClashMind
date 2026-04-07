@@ -378,7 +378,7 @@ export function useAiModelCatalogQuery(settings: AiSettings, enabled: boolean) {
       ...AI_MODEL_CATALOG_QUERY_KEY,
       normalized.provider,
       normalized.baseUrl,
-      normalized.apiKey,
+      normalized.apiKey.length > 0,
     ],
     queryFn: () => api.ai.fetchModels(normalized),
     enabled: enabled && canFetch,

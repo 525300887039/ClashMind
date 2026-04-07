@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { AiModelCatalogSource, AiProviderKind, AiSettings as AiSettingsValue } from "@/lib/tauri-api";
+import { normalizeErrorMessage } from "@/lib/error";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_AI_SETTINGS,
@@ -303,11 +304,19 @@ export function AiSettingsPanel() {
     modelCatalogQuery.error?.message ??
     modelCatalogQuery.data?.message ??
     "修改 Provider、API Key 或 Base URL 后会自动获取可用模型。";
-  const isDirty = useMemo(
-    () =>
-      JSON.stringify(normalizeAiSettings(draft)) !== JSON.stringify(normalizeAiSettings(currentSettings)),
-    [draft, currentSettings],
-  );
+  const isDirty = useMemo(() => {
+    const a = normalizeAiSettings(draft);
+    const b = normalizeAiSettings(currentSettings);
+    return (
+      a.provider !== b.provider ||
+      a.model !== b.model ||
+      a.apiKey !== b.apiKey ||
+      a.baseUrl !== b.baseUrl ||
+      a.temperature !== b.temperature ||
+      a.maxTokens !== b.maxTokens ||
+      a.autoStart !== b.autoStart
+    );
+  }, [draft, currentSettings]);
   const connectionResult = connectionTestMutation.data;
   const connectionError = connectionTestMutation.error;
   const connectionMessage = connectionError?.message ?? connectionResult?.message ?? "";
@@ -336,7 +345,7 @@ export function AiSettingsPanel() {
       await saveMutation.mutateAsync(draft);
       toast.success("AI 设置已保存到应用数据目录");
     } catch (error) {
-      toast.error(`保存 AI 设置失败: ${String(error)}`);
+      toast.error(`保存 AI 设置失败: ${normalizeErrorMessage(error)}`);
     }
   };
 
@@ -345,7 +354,7 @@ export function AiSettingsPanel() {
       await service.start();
       toast.success("AI 服务已启动");
     } catch (error) {
-      toast.error(`启动 AI 服务失败: ${String(error)}`);
+      toast.error(`启动 AI 服务失败: ${normalizeErrorMessage(error)}`);
     }
   };
 
@@ -354,7 +363,7 @@ export function AiSettingsPanel() {
       await service.stop();
       toast.success("AI 服务已停止");
     } catch (error) {
-      toast.error(`停止 AI 服务失败: ${String(error)}`);
+      toast.error(`停止 AI 服务失败: ${normalizeErrorMessage(error)}`);
     }
   };
 
@@ -367,7 +376,7 @@ export function AiSettingsPanel() {
         toast.error("连通性测试失败");
       }
     } catch (error) {
-      toast.error(`连通性测试失败: ${String(error)}`);
+      toast.error(`连通性测试失败: ${normalizeErrorMessage(error)}`);
     }
   };
 
@@ -391,7 +400,7 @@ export function AiSettingsPanel() {
         toast(message);
       }
     } catch (error) {
-      toast.error(`获取模型列表失败: ${String(error)}`);
+      toast.error(`获取模型列表失败: ${normalizeErrorMessage(error)}`);
     }
   };
 

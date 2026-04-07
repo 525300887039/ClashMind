@@ -34,7 +34,7 @@ export function useConfigApply(toolCallId: string, confirmationBatchId?: string)
       } else {
         setToolCallStatus(toolCallId, "applied");
       }
-      await invalidateRuntimeQueries(queryClient, { includeSnapshots: true });
+      await invalidateRuntimeQueries(queryClient);
       toast.success("配置已写入并完成热重载");
     },
     onError: (error) => {

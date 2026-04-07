@@ -22,7 +22,7 @@ export function useCreateSnapshot() {
   return useMutation<number, Error, string | undefined>({
     mutationFn: (description) => api.ai.createSnapshot(description),
     onSuccess: async () => {
-      await invalidateRuntimeQueries(queryClient, { includeSnapshots: true });
+      await invalidateRuntimeQueries(queryClient);
       toast.success("配置快照已创建");
     },
     onError: (error) => {
@@ -37,7 +37,7 @@ export function useRestoreSnapshot() {
   return useMutation<void, Error, number>({
     mutationFn: (id) => api.ai.restoreSnapshot(id),
     onSuccess: async () => {
-      await invalidateRuntimeQueries(queryClient, { includeSnapshots: true });
+      await invalidateRuntimeQueries(queryClient);
       toast.success("已恢复到所选快照并完成热重载");
     },
     onError: (error) => {
