@@ -274,7 +274,7 @@ export type AiStreamEvent =
   | { type: "done"; tokensUsed?: number };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isConfigChangeAction(value: unknown): value is ConfigChangeAction {

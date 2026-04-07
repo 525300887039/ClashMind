@@ -1,22 +1,13 @@
-import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/tauri-api";
 import { normalizeErrorMessage } from "@/lib/error";
+import { invalidateRuntimeQueries } from "@/lib/query-client";
 
 const SNAPSHOT_KEYS = {
   all: ["snapshots"] as const,
   list: (limit: number) => ["snapshots", limit] as const,
 };
-
-async function invalidateSnapshotRelatedQueries(queryClient: QueryClient) {
-  await Promise.all([
-    queryClient.invalidateQueries({ queryKey: SNAPSHOT_KEYS.all }),
-    queryClient.invalidateQueries({ queryKey: ["config"] }),
-    queryClient.invalidateQueries({ queryKey: ["configs"] }),
-    queryClient.invalidateQueries({ queryKey: ["proxies"] }),
-    queryClient.invalidateQueries({ queryKey: ["rules"] }),
-  ]);
-}
 
 export function useSnapshots(limit = 20) {
   return useQuery({
@@ -31,7 +22,7 @@ export function useCreateSnapshot() {
   return useMutation<number, Error, string | undefined>({
     mutationFn: (description) => api.ai.createSnapshot(description),
     onSuccess: async () => {
-      await invalidateSnapshotRelatedQueries(queryClient);
+      await invalidateRuntimeQueries(queryClient, { includeSnapshots: true });
       toast.success("配置快照已创建");
     },
     onError: (error) => {
@@ -46,7 +37,7 @@ export function useRestoreSnapshot() {
   return useMutation<void, Error, number>({
     mutationFn: (id) => api.ai.restoreSnapshot(id),
     onSuccess: async () => {
-      await invalidateSnapshotRelatedQueries(queryClient);
+      await invalidateRuntimeQueries(queryClient, { includeSnapshots: true });
       toast.success("已恢复到所选快照并完成热重载");
     },
     onError: (error) => {

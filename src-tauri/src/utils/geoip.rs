@@ -422,7 +422,7 @@ pub fn default_mihomo_config_dir() -> String {
 }
 
 pub fn resolve_country_mmdb_path(config_dir: &str) -> Option<PathBuf> {
-    let config_dir = expand_tilde(config_dir);
+    let config_dir = super::path::expand_tilde(config_dir);
     let candidate = Path::new(&config_dir).join(COUNTRY_MMDB_FILE_NAME);
 
     candidate.exists().then_some(candidate)
@@ -452,15 +452,6 @@ fn load_mmdb_reader(path: &Path) -> Option<Reader<Vec<u8>>> {
     }
 }
 
-fn expand_tilde(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix('~') {
-        if let Some(home) = dirs::home_dir() {
-            return format!("{}{rest}", home.display());
-        }
-    }
-
-    path.to_string()
-}
 
 fn is_public_ip(ip_addr: &IpAddr) -> bool {
     match ip_addr {

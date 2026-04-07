@@ -1,17 +1,11 @@
 import { useState, useMemo } from "react";
 import { X, Trash2, Search, ArrowUpDown } from "lucide-react";
 import type { Connection } from "@/lib/tauri-api";
-import { cn } from "@/lib/utils";
+import { cn, formatBytes } from "@/lib/utils";
 import { useCloseConnection, useCloseAllConnections } from "./hooks/use-connections";
 
 type SortKey = "host" | "network" | "type" | "chains" | "rule" | "download" | "upload" | "start";
 type SortDir = "asc" | "desc";
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1048576).toFixed(1)} MB`;
-}
 
 function formatDuration(start: string): string {
   const ms = Date.now() - new Date(start).getTime();

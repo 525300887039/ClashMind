@@ -75,6 +75,11 @@ function createId() {
   return crypto.randomUUID();
 }
 
+function omitKey<T extends Record<string, unknown>>(obj: T, key: string): T {
+  const { [key]: _, ...rest } = obj;
+  return rest as T;
+}
+
 export const useAiStore = create<AiStore>()((set, get) => ({
   messages: [],
   isLoading: false,
@@ -219,11 +224,7 @@ export const useAiStore = create<AiStore>()((set, get) => ({
     set((state) => ({
       configApplyPayloads:
         status === "applied" || status === "rejected"
-          ? Object.fromEntries(
-              Object.entries(state.configApplyPayloads).filter(
-                ([batchId]) => batchId !== confirmationBatchId,
-              ),
-            )
+          ? omitKey(state.configApplyPayloads, confirmationBatchId)
           : state.configApplyPayloads,
       messages: state.messages.map((message) => ({
         ...message,
@@ -247,11 +248,7 @@ export const useAiStore = create<AiStore>()((set, get) => ({
     get().configApplyPayloads[confirmationBatchId] ?? null,
   clearConfigApplyPayload: (confirmationBatchId) =>
     set((state) => ({
-      configApplyPayloads: Object.fromEntries(
-        Object.entries(state.configApplyPayloads).filter(
-          ([batchId]) => batchId !== confirmationBatchId,
-        ),
-      ),
+      configApplyPayloads: omitKey(state.configApplyPayloads, confirmationBatchId),
     })),
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),

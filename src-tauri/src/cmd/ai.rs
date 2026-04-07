@@ -8,6 +8,22 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_sql::DbPool;
 use thiserror::Error;
 
+/// Serialize any `Display` error type as its string representation for Tauri IPC.
+macro_rules! impl_serialize_display {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl Serialize for $ty {
+                fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+                where
+                    S: serde::Serializer,
+                {
+                    serializer.serialize_str(&self.to_string())
+                }
+            }
+        )+
+    };
+}
+
 use crate::{
     core::{
         mihomo::MihomoError,
@@ -374,14 +390,7 @@ pub enum AiConfigChangeError {
     },
 }
 
-impl Serialize for AiConfigChangeError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
+impl_serialize_display!(AiConfigChangeError);
 
 #[derive(Error, Debug)]
 pub enum AiReportError {
@@ -397,14 +406,7 @@ pub enum AiReportError {
     InvalidResult(String),
 }
 
-impl Serialize for AiReportError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
+impl_serialize_display!(AiReportError);
 
 #[derive(Error, Debug)]
 pub enum AiSettingsError {
@@ -442,14 +444,7 @@ pub enum AiSettingsError {
     Sidecar(#[from] AiSidecarError),
 }
 
-impl Serialize for AiSettingsError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
+impl_serialize_display!(AiSettingsError);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReportWindow {

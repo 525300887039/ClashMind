@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/tauri-api";
 import { normalizeErrorMessage } from "@/lib/error";
+import { invalidateRuntimeQueries } from "@/lib/query-client";
 import { useAiStore } from "@/stores/ai-store";
 
 export function useConfigApply(toolCallId: string, confirmationBatchId?: string) {
@@ -12,15 +13,6 @@ export function useConfigApply(toolCallId: string, confirmationBatchId?: string)
   );
   const getConfigApplyPayload = useAiStore((state) => state.getConfigApplyPayload);
   const clearConfigApplyPayload = useAiStore((state) => state.clearConfigApplyPayload);
-  const invalidateRuntimeQueries = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["config"] }),
-      queryClient.invalidateQueries({ queryKey: ["configs"] }),
-      queryClient.invalidateQueries({ queryKey: ["proxies"] }),
-      queryClient.invalidateQueries({ queryKey: ["rules"] }),
-      queryClient.invalidateQueries({ queryKey: ["snapshots"] }),
-    ]);
-  };
 
   const applyMutation = useMutation<void, Error, void>({
     mutationFn: async () => {
@@ -42,7 +34,7 @@ export function useConfigApply(toolCallId: string, confirmationBatchId?: string)
       } else {
         setToolCallStatus(toolCallId, "applied");
       }
-      await invalidateRuntimeQueries();
+      await invalidateRuntimeQueries(queryClient, { includeSnapshots: true });
       toast.success("配置已写入并完成热重载");
     },
     onError: (error) => {
