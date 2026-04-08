@@ -177,6 +177,8 @@ AI 侧则按 AI 工作流的职责拆分：
 
 ### 流 1：代理切换
 
+![代理切换数据流](images/03-proxy-switch-flow.png)
+
 代理切换是最能说明边界的一条链路。
 
 前端不会直接调 Mihomo 的 `/proxies/:name`。
@@ -214,6 +216,8 @@ export function useSwitchProxy() {
 
 ### 流 2：配置编辑与热重载
 
+![配置编辑与热重载链路](images/04-config-edit-flow.png)
+
 配置编辑的链路比代理切换更长，因为它涉及本地文件。
 
 前端同样只持有一个很薄的调用层：
@@ -250,6 +254,8 @@ export function useWriteConfig() {
 这条链路里最重要的不是“能改 YAML”，而是“文件写入和运行时重载都由同一层负责”，因此更容易保证一致性。
 
 ### 流 3：AI 对话与流式事件
+
+![AI 对话与流式事件](images/05-ai-chat-stream-flow.png)
 
 AI 链路再多一层 sidecar。
 
@@ -345,6 +351,8 @@ AI 会话也有独立 store，专门管理：
 
 > 后端事实走 Query，本地交互走 Zustand。
 
+![状态管理决策树](images/10-state-management-decision.png)
+
 ## 数据库设计概览
 
 SQLite 并不是只拿来存一个“设置表”。
@@ -407,6 +415,8 @@ CREATE TABLE IF NOT EXISTS ai_conversations (
 这就是 AI 功能之所以能被当作“工作流”而不是“一次性文本输出”的基础。
 
 ## Collector、BatchBuffer 与 RealtimeStore
+
+![数据采集管道](images/06-collector-buffer-store.png)
 
 除了 SQLite，项目还保留了两类中间数据结构：
 

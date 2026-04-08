@@ -65,6 +65,8 @@ const outputFile = resolve(
 
 ## 生命周期：由 Rust 统一管理
 
+![AI Sidecar 生命周期状态机](images/07-ai-sidecar-lifecycle.png)
+
 AI sidecar 的生命周期不由前端直接控制，而是由 Rust 侧的 `AiSidecarState` 管理。真实代码里，Rust 会维护当前 runtime 和自增请求 ID：
 
 ```rust
@@ -178,6 +180,8 @@ export const streamEventSchema = z.discriminatedUnion("type", [
 因此 Rust 和前端能稳定处理 `text_delta`、`tool_call`、`tool_result`、`error` 和 `done` 这几类事件。这套类型设计让“文本输出”和“工具结果”能走同一条流，前端不需要自己维护两套通道。
 
 ## Rust callback：AI sidecar 不直接碰系统边界
+
+![Rust Callback 机制](images/08-rust-callback-mechanism.png)
 
 AI sidecar 自己不直接读配置文件，也不直接访问 Mihomo API。它通过一个 callback 机制，把这些受控能力向 Rust 请求。`tools/rust-rpc.ts` 的核心实现如下：
 
@@ -451,7 +455,9 @@ registry[AI_STREAM_LISTENER_KEY] = listen<AiStreamEvent>("ai-stream", (event) =>
 
 ## 一次 AI 配置修改的完整链路
 
-一次“请帮我添加一个自动测速代理组”的完整链路是：
+![AI 配置修改 10 步工作流](images/09-ai-config-workflow.png)
+
+一次”请帮我添加一个自动测速代理组”的完整链路是：
 
 1. 前端收集消息和 AI 设置。
 2. Rust 确保 AI sidecar 已启动。

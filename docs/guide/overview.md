@@ -24,6 +24,8 @@ ClashMind 是一个面向 Mihomo 用户的桌面客户端。
 2. Rust + Tauri 负责系统集成、进程管理、IPC 和持久化。
 3. Mihomo 与 AI Service 作为 sidecar 进程独立运行。
 
+![三层架构总览](images/01-three-layer-architecture.png)
+
 这样做的结果是：
 
 - 代理管理、连接列表、规则、日志、配置编辑这些传统能力仍然完整存在。
@@ -57,6 +59,8 @@ ClashMind 的定位可以用一句话概括：
 AI 不只是一个聊天框，而是能读取上下文、调用工具、生成配置变更预览、等待确认、再由 Rust 侧正式应用的受控工作流。
 
 ## 核心能力
+
+![核心能力矩阵](images/02-capability-overview.png)
 
 ### 代理与连接管理
 
