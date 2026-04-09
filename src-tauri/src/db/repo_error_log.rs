@@ -243,15 +243,24 @@ pub async fn get_top_failure_hosts(
     let pool = sqlite_pool(db)?;
     let rows = sqlx::query(
         r#"
-WITH error_counts AS (
+WITH failed_connections AS (
     SELECT
-        TRIM(host) AS host,
-        COUNT(*) AS failure_count
-    FROM error_logs
-    WHERE host IS NOT NULL
-      AND TRIM(host) <> ''
-      AND datetime(created_at) >= datetime('now', '-' || ? || ' minutes')
-    GROUP BY TRIM(host)
+        TRIM(c.host) AS host,
+        COUNT(DISTINCT c.id) AS failure_count
+    FROM connections AS c
+    WHERE c.host IS NOT NULL
+      AND TRIM(c.host) <> ''
+      AND datetime(COALESCE(c.close_time, c.last_observed_at, c.start_time)) >= datetime('now', '-' || ? || ' minutes')
+      AND EXISTS (
+          SELECT 1
+          FROM error_logs AS e
+          WHERE e.host IS NOT NULL
+            AND TRIM(e.host) = TRIM(c.host)
+            AND datetime(e.created_at) >= datetime('now', '-' || ? || ' minutes')
+            AND datetime(e.created_at) >= datetime(c.start_time)
+            AND datetime(e.created_at) <= datetime(COALESCE(c.close_time, c.last_observed_at, c.start_time))
+      )
+    GROUP BY TRIM(c.host)
 ),
 connection_counts AS (
     SELECT
@@ -264,17 +273,18 @@ connection_counts AS (
     GROUP BY TRIM(host)
 )
 SELECT
-    error_counts.host AS host,
-    error_counts.failure_count AS failure_count,
+    failed_connections.host AS host,
+    failed_connections.failure_count AS failure_count,
     connection_counts.total_count AS total_count,
-    CAST(error_counts.failure_count AS REAL) / CAST(connection_counts.total_count AS REAL) AS failure_rate
-FROM error_counts
-INNER JOIN connection_counts ON connection_counts.host = error_counts.host
+    CAST(failed_connections.failure_count AS REAL) / CAST(connection_counts.total_count AS REAL) AS failure_rate
+FROM failed_connections
+INNER JOIN connection_counts ON connection_counts.host = failed_connections.host
 WHERE connection_counts.total_count > 0
 ORDER BY failure_rate DESC, failure_count DESC, host ASC
 LIMIT ?;
 "#,
     )
+    .bind(minutes)
     .bind(minutes)
     .bind(minutes)
     .bind(i64::from(limit))
@@ -603,8 +613,9 @@ INSERT INTO connections (
         assert_eq!(top_hosts[0].total_count, 1);
         assert_eq!(top_hosts[0].failure_rate, 1.0);
         assert_eq!(top_hosts[1].host, "api.example");
-        assert_eq!(top_hosts[1].failure_count, 2);
+        assert_eq!(top_hosts[1].failure_count, 1);
         assert_eq!(top_hosts[1].total_count, 3);
+        assert!((top_hosts[1].failure_rate - (1.0 / 3.0)).abs() < 1e-12);
 
         let dns_count = count_dns_errors(&db, 30).await;
         assert!(dns_count.is_ok());
@@ -613,6 +624,59 @@ INSERT INTO connections (
         };
 
         assert_eq!(dns_count, 1);
+    }
+
+    #[tokio::test]
+    async fn top_failure_hosts_counts_failed_connections_instead_of_error_rows() {
+        let db = prepare_db().await;
+        assert!(db.is_ok());
+        let Ok(db) = db else {
+            panic!("error log test database should be created");
+        };
+
+        let pool = sqlite_pool(&db);
+        assert!(pool.is_ok());
+        let Ok(pool) = pool else {
+            panic!("sqlite pool should be available");
+        };
+
+        let seed = sqlx::query(
+            r#"
+INSERT INTO error_logs (category, proxy_node, host, rule, message, created_at) VALUES
+    ('timeout', 'Proxy-A', 'api.example', 'MATCH', 'deadline exceeded', datetime('now', '-2 minutes')),
+    ('timeout', 'Proxy-A', 'api.example', 'MATCH', 'i/o timeout', datetime('now', '-1 minutes'));
+
+INSERT INTO connections (
+    id, host, network, conn_type, rule, proxy_chain, start_time, close_time, last_observed_at
+) VALUES
+    (
+        'conn-1',
+        'api.example',
+        'tcp',
+        'HTTPS',
+        'MATCH',
+        '["Proxy-A"]',
+        strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', '-5 minutes')),
+        NULL,
+        strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now'))
+    );
+"#,
+        )
+        .execute(pool)
+        .await;
+        assert!(seed.is_ok());
+
+        let top_hosts = get_top_failure_hosts(&db, 30, 10).await;
+        assert!(top_hosts.is_ok());
+        let Ok(top_hosts) = top_hosts else {
+            panic!("failure hosts should be queryable");
+        };
+
+        assert_eq!(top_hosts.len(), 1);
+        assert_eq!(top_hosts[0].host, "api.example");
+        assert_eq!(top_hosts[0].failure_count, 1);
+        assert_eq!(top_hosts[0].total_count, 1);
+        assert_eq!(top_hosts[0].failure_rate, 1.0);
     }
 
     #[tokio::test]

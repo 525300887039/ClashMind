@@ -238,11 +238,10 @@ INSERT INTO connections (
         assert_eq!(summary.top_error_nodes.len(), 2);
         assert_eq!(summary.top_error_nodes[0].proxy_node, "Proxy-A");
         assert_eq!(summary.top_error_nodes[0].count, 2);
-        assert_eq!(summary.top_failure_hosts.len(), 2);
+        assert_eq!(summary.top_failure_hosts.len(), 1);
         assert_eq!(summary.top_failure_hosts[0].host, "api.example");
-        assert_eq!(summary.top_failure_hosts[0].failure_count, 2);
-        assert_eq!(summary.top_failure_hosts[0].failure_rate, 1.0);
-        assert_eq!(summary.top_failure_hosts[1].host, "dns.example");
+        assert_eq!(summary.top_failure_hosts[0].failure_count, 1);
+        assert_eq!(summary.top_failure_hosts[0].failure_rate, 0.5);
         assert!(!summary.generated_at.is_empty());
     }
 
