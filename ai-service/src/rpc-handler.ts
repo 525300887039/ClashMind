@@ -20,12 +20,11 @@ import { allTools } from "./tools/index.js";
 import { getErrorMessage } from "./utils.js";
 import { handleRustCallbackResponse, requestFromRust } from "./tools/rust-rpc.js";
 import {
-  anomalyAlertSchema,
   chatParamsSchema,
   connectionTestParamsSchema,
   diagnosisParamsSchema,
+  diagnosisPayloadSchema,
   diagnosisResultSchema,
-  diagnosisSummarySchema,
   modelCatalogParamsSchema,
   modelCatalogResultSchema,
   type ChatParams,
@@ -556,38 +555,29 @@ registerHandler("generate_diagnosis", async (params) => {
   }
 
   const diagnosisParams = parsedParams.data;
-  const summaryResponse = await requestFromRust("get_diagnosis_summary", {
-    timeRangeMinutes: diagnosisParams.timeRangeMinutes,
-  });
-  const alertsResponse = await requestFromRust("detect_anomalies", {
+  const diagnosisPayloadResponse = await requestFromRust("run_full_diagnosis", {
     timeRangeMinutes: diagnosisParams.timeRangeMinutes,
   });
 
-  const parsedSummary = diagnosisSummarySchema.safeParse(summaryResponse);
-  if (!parsedSummary.success) {
-    throw new Error(parsedSummary.error.issues.map((issue) => issue.message).join("; "));
+  const parsedPayload = diagnosisPayloadSchema.safeParse(diagnosisPayloadResponse);
+  if (!parsedPayload.success) {
+    throw new Error(parsedPayload.error.issues.map((issue) => issue.message).join("; "));
   }
 
-  const alertsSchema = z.array(anomalyAlertSchema);
-  const parsedAlerts = alertsSchema.safeParse(alertsResponse);
-  if (!parsedAlerts.success) {
-    throw new Error(parsedAlerts.error.issues.map((issue) => issue.message).join("; "));
-  }
-
-  const prompt = buildDiagnosisPrompt(parsedSummary.data, parsedAlerts.data);
+  const prompt = buildDiagnosisPrompt(parsedPayload.data.summary, parsedPayload.data.alerts);
   const { text } = await generateText({
     model: createModel(diagnosisParams.settings),
     prompt,
     ...(diagnosisParams.settings.maxTokens === undefined
       ? {}
       : { maxOutputTokens: diagnosisParams.settings.maxTokens }),
-    temperature: 0.3,
+    temperature: diagnosisParams.settings.temperature ?? 0.3,
   });
 
   return diagnosisResultSchema.parse({
     report: text.trim(),
-    summary: parsedSummary.data,
-    alerts: parsedAlerts.data,
+    summary: parsedPayload.data.summary,
+    alerts: parsedPayload.data.alerts,
     generatedAt: new Date().toISOString(),
   });
 });
