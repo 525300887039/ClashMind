@@ -148,6 +148,12 @@ export interface DiagnosisOverview {
   alerts: AnomalyAlert[];
 }
 
+export interface NotificationSettings {
+  enabled: boolean;
+  criticalOnly: boolean;
+  scanIntervalSecs: number;
+}
+
 export type HealthGrade = "excellent" | "good" | "fair" | "poor" | "critical";
 
 export interface NodeHealthScore {
@@ -199,6 +205,9 @@ export interface DiagnosisApi {
   getSummary: (timeRangeMinutes?: number) => Promise<DiagnosisSummary>;
   detectAnomalies: (timeRangeMinutes?: number) => Promise<AnomalyAlert[]>;
   getNodeHealth: (hours?: number) => Promise<NodeHealthScore[]>;
+  getNotificationSettings: () => Promise<NotificationSettings>;
+  updateNotificationSettings: (settings: NotificationSettings) => Promise<void>;
+  triggerAnomalyScan: () => Promise<AnomalyAlert[]>;
   recordDelayTest: (
     nodeName: string,
     delayMs: number | null,
@@ -611,6 +620,11 @@ export const api = {
       invoke<AnomalyAlert[]>("detect_anomalies", { timeRangeMinutes }),
     getNodeHealth: (hours?: number) =>
       invoke<NodeHealthScore[]>("get_node_health", { hours }),
+    getNotificationSettings: () =>
+      invoke<NotificationSettings>("get_notification_settings"),
+    updateNotificationSettings: (settings: NotificationSettings) =>
+      invoke<void>("update_notification_settings", { settings }),
+    triggerAnomalyScan: () => invoke<AnomalyAlert[]>("trigger_anomaly_scan"),
     recordDelayTest: (nodeName: string, delayMs: number | null, success: boolean) =>
       invoke<void>("record_delay_test", { nodeName, delayMs, success }),
   } satisfies DiagnosisApi,

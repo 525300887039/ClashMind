@@ -1,14 +1,25 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as Switch from "@radix-ui/react-switch";
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { RotateCw, Save, Settings2, Waypoints } from "lucide-react";
+import { BellRing, RotateCw, Save, Settings2, Waypoints } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { AiSettingsPanel } from "@/features/ai/ai-settings";
-import { api } from "@/lib/tauri-api";
+import { normalizeErrorMessage } from "@/lib/error";
+import { api, type NotificationSettings } from "@/lib/tauri-api";
 import { cn } from "@/lib/utils";
 import { useAppStore, type Theme } from "@/stores/app-store";
 import { ActionButton } from "@/components/ui/action-button";
 import { FieldShell } from "@/components/ui/field-shell";
 import { PageHeader } from "@/components/ui/page-header";
+
+const NOTIFICATION_SETTINGS_QUERY_KEY = ["notification-settings"] as const;
+const NOTIFICATION_INTERVAL_OPTIONS = [
+  { value: 60, label: "1 分钟" },
+  { value: 300, label: "5 分钟" },
+  { value: 600, label: "10 分钟" },
+  { value: 1800, label: "30 分钟" },
+] as const;
 
 export function SettingsPage() {
   const store = useAppStore();
@@ -147,10 +158,195 @@ export function SettingsPage() {
             </div>
           </section>
 
+          <NotificationSettingsSection />
+
           <AiSettingsPanel />
         </div>
       </div>
     </motion.section>
+  );
+}
+
+function NotificationSettingsSection() {
+  const queryClient = useQueryClient();
+  const notificationQuery = useQuery({
+    queryKey: NOTIFICATION_SETTINGS_QUERY_KEY,
+    queryFn: api.diagnosis.getNotificationSettings,
+  });
+
+  const updateMutation = useMutation<
+    NotificationSettings,
+    Error,
+    NotificationSettings,
+    { previousSettings?: NotificationSettings }
+  >({
+    mutationFn: async (settings) => {
+      await api.diagnosis.updateNotificationSettings(settings);
+      return settings;
+    },
+    onMutate: async (settings) => {
+      await queryClient.cancelQueries({ queryKey: NOTIFICATION_SETTINGS_QUERY_KEY });
+      const previousSettings = queryClient.getQueryData<NotificationSettings>(
+        NOTIFICATION_SETTINGS_QUERY_KEY,
+      );
+      queryClient.setQueryData(NOTIFICATION_SETTINGS_QUERY_KEY, settings);
+      return { previousSettings };
+    },
+    onError: (error, _settings, context) => {
+      if (context?.previousSettings) {
+        queryClient.setQueryData(NOTIFICATION_SETTINGS_QUERY_KEY, context.previousSettings);
+      }
+      toast.error(`更新通知设置失败: ${normalizeErrorMessage(error)}`);
+    },
+    onSuccess: (settings) => {
+      queryClient.setQueryData(NOTIFICATION_SETTINGS_QUERY_KEY, settings);
+    },
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: NOTIFICATION_SETTINGS_QUERY_KEY });
+    },
+  });
+
+  const settings = notificationQuery.data;
+  const controlsDisabled = updateMutation.isPending;
+
+  const updateSettings = (nextSettings: NotificationSettings) => {
+    updateMutation.mutate(nextSettings);
+  };
+
+  return (
+    <section className="relative overflow-hidden rounded-[2rem] border border-border/70 bg-background/95 p-6 shadow-[0_28px_100px_-52px_rgba(15,23,42,0.55)]">
+      <div className="pointer-events-none absolute -left-12 top-4 size-32 rounded-full bg-primary/10 blur-3xl" />
+
+      <div className="relative">
+        <div className="flex flex-col gap-4 border-b border-border/70 pb-5 xl:flex-row xl:items-end xl:justify-between">
+          <div className="max-w-2xl">
+            <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/10 px-3 py-1 text-xs font-medium tracking-[0.18em] text-primary uppercase">
+              <BellRing className="size-3.5" />
+              Desktop Notification
+            </div>
+            <h2 className="mt-4 text-2xl font-semibold tracking-tight text-foreground">
+              通知设置
+            </h2>
+            <p className="mt-2 text-sm leading-7 text-muted-foreground">
+              管理后台异常扫描的桌面通知行为。扫描间隔会同时作为同类告警的冷却时间，避免短时间重复提醒。
+            </p>
+          </div>
+          <div className="rounded-full border border-border/70 bg-background/75 px-3 py-2 text-xs font-medium tracking-[0.18em] text-muted-foreground uppercase">
+            Alerts / Cooldown / Scan Loop
+          </div>
+        </div>
+
+        {notificationQuery.isLoading && !settings ? (
+          <div className="mt-5 rounded-[1.4rem] border border-border/70 bg-background/75 px-4 py-5 text-sm text-muted-foreground">
+            正在读取通知设置...
+          </div>
+        ) : null}
+
+        {notificationQuery.error && !settings ? (
+          <div className="mt-5 rounded-[1.4rem] border border-destructive/25 bg-destructive/5 px-4 py-5 text-sm text-destructive">
+            读取通知设置失败: {normalizeErrorMessage(notificationQuery.error)}
+          </div>
+        ) : null}
+
+        {settings ? (
+          <div className="mt-5 grid gap-4 xl:grid-cols-2">
+            <FieldShell
+              label="启用桌面通知"
+              hint="后台异常扫描命中 Warning 或 Critical 告警时，向系统发送桌面通知。"
+            >
+              <NotificationToggle
+                checked={settings.enabled}
+                disabled={controlsDisabled}
+                onCheckedChange={(enabled) => updateSettings({ ...settings, enabled })}
+                stateLabel={settings.enabled ? "当前为启用" : "当前为关闭"}
+              />
+            </FieldShell>
+
+            <FieldShell
+              label="仅严重告警"
+              hint="启用后仅推送 Critical 级别告警；关闭时 Warning 和 Critical 都会通知。"
+            >
+              <NotificationToggle
+                checked={settings.criticalOnly}
+                disabled={controlsDisabled || !settings.enabled}
+                onCheckedChange={(criticalOnly) =>
+                  updateSettings({ ...settings, criticalOnly })
+                }
+                stateLabel={settings.criticalOnly ? "仅推送 Critical" : "推送 Warning 与 Critical"}
+              />
+            </FieldShell>
+
+            <div className="xl:col-span-2">
+              <FieldShell
+                label="扫描间隔"
+                hint="后台扫描异常的频率，同时也是同类通知的最短冷却时间。最短 60 秒。"
+              >
+                <select
+                  value={settings.scanIntervalSecs}
+                  onChange={(event) =>
+                    updateSettings({
+                      ...settings,
+                      scanIntervalSecs: Number(event.target.value),
+                    })
+                  }
+                  className={cn(inputClassName(), "appearance-auto bg-background")}
+                  disabled={controlsDisabled}
+                >
+                  {NOTIFICATION_INTERVAL_OPTIONS.map((option) => (
+                    <option
+                      key={option.value}
+                      value={option.value}
+                      className="bg-background text-foreground"
+                    >
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </FieldShell>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+interface NotificationToggleProps {
+  checked: boolean;
+  disabled?: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  stateLabel: string;
+}
+
+function NotificationToggle({
+  checked,
+  disabled = false,
+  onCheckedChange,
+  stateLabel,
+}: NotificationToggleProps) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="text-sm font-medium text-foreground">{stateLabel}</div>
+      <Switch.Root
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onCheckedChange}
+        className={cn(
+          "relative inline-flex h-7 w-12 items-center rounded-full border transition-colors",
+          checked
+            ? "border-primary/30 bg-primary/85"
+            : "border-border/80 bg-muted/35",
+          disabled && "cursor-not-allowed opacity-60",
+        )}
+      >
+        <Switch.Thumb
+          className={cn(
+            "block size-5 rounded-full bg-white shadow transition-transform",
+            checked ? "translate-x-[1.45rem]" : "translate-x-1",
+          )}
+        />
+      </Switch.Root>
+    </div>
   );
 }
 
