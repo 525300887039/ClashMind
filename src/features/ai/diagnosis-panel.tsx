@@ -15,8 +15,7 @@ import { SectionCard } from "@/components/ui/section-card";
 import { markdownComponents } from "./markdown-components";
 import { DiagnosisAlertCard } from "./diagnosis-alert-card";
 import {
-  useAnomalyAlerts,
-  useDiagnosisSummary,
+  useDiagnosisOverview,
   useQuickDiagnosis,
 } from "./hooks/use-diagnosis";
 import { isAiConfigured, useAiSettingsQuery } from "./hooks/use-ai-settings";
@@ -132,8 +131,7 @@ export function DiagnosisPanel() {
   const [timeRange, setTimeRange] = useState<DiagnosisTimeRangeMinutes>(30);
   const setCurrentPage = useAppStore((state) => state.setCurrentPage);
   const { data: aiSettings } = useAiSettingsQuery();
-  const summaryQuery = useDiagnosisSummary(timeRange);
-  const alertsQuery = useAnomalyAlerts(timeRange);
+  const overviewQuery = useDiagnosisOverview(timeRange);
   const { runDiagnosis, isLoading, data: report, error, reset } = useQuickDiagnosis();
   const isConfigured = isAiConfigured(aiSettings);
 
@@ -141,8 +139,8 @@ export function DiagnosisPanel() {
     reset();
   }, [timeRange, reset]);
 
-  const summary = summaryQuery.data;
-  const alerts = alertsQuery.data ?? [];
+  const summary = overviewQuery.data?.summary;
+  const alerts = overviewQuery.data?.alerts ?? [];
   const totalErrorCount = useMemo(() => getTotalErrorCount(summary), [summary]);
   const leadingFailureHost = summary?.topFailureHosts[0];
   const leadingErrorNode = summary?.topErrorNodes[0];
@@ -259,7 +257,7 @@ export function DiagnosisPanel() {
             <RefreshCw
               className={cn(
                 "size-3.5",
-                summaryQuery.isFetching || alertsQuery.isFetching ? "animate-spin" : "",
+                overviewQuery.isFetching ? "animate-spin" : "",
               )}
             />
             每分钟自动刷新
@@ -279,12 +277,8 @@ export function DiagnosisPanel() {
           />
         ) : null}
 
-        {summaryQuery.error ? (
-          <QueryStateBanner tone="error" message={summaryQuery.error.message} />
-        ) : null}
-
-        {alertsQuery.error ? (
-          <QueryStateBanner tone="error" message={alertsQuery.error.message} />
+        {overviewQuery.error ? (
+          <QueryStateBanner tone="error" message={overviewQuery.error.message} />
         ) : null}
 
         <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
@@ -348,7 +342,7 @@ export function DiagnosisPanel() {
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-            {alertsQuery.isLoading && alerts.length === 0 ? (
+            {overviewQuery.isLoading && alerts.length === 0 ? (
               <div className="flex h-full min-h-[18rem] items-center justify-center rounded-[1.35rem] border border-dashed border-border/70 bg-muted/10 px-6 text-sm text-muted-foreground">
                 <div className="flex items-center gap-2">
                   <RefreshCw className="size-4 animate-spin text-primary" />

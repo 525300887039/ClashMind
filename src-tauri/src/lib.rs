@@ -103,6 +103,7 @@ pub fn run() {
             cmd::collector::get_realtime_summary,
             cmd::diagnosis::get_diagnosis_summary,
             cmd::diagnosis::detect_anomalies,
+            cmd::diagnosis::get_diagnosis_overview,
             cmd::stats::get_domain_stats,
             cmd::stats::get_traffic_hourly,
             cmd::stats::get_traffic_daily,

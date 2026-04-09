@@ -143,7 +143,13 @@ export interface DiagnosisReport {
   generatedAt: string;
 }
 
+export interface DiagnosisOverview {
+  summary: DiagnosisSummary;
+  alerts: AnomalyAlert[];
+}
+
 export interface DiagnosisApi {
+  getOverview: (timeRangeMinutes?: number) => Promise<DiagnosisOverview>;
   getSummary: (timeRangeMinutes?: number) => Promise<DiagnosisSummary>;
   detectAnomalies: (timeRangeMinutes?: number) => Promise<AnomalyAlert[]>;
 }
@@ -459,6 +465,8 @@ export const api = {
     geo: (days: number) => invoke<GeoStat[]>("get_geo_stats", { days }),
   },
   diagnosis: {
+    getOverview: (timeRangeMinutes?: number) =>
+      invoke<DiagnosisOverview>("get_diagnosis_overview", { timeRangeMinutes }),
     getSummary: (timeRangeMinutes?: number) =>
       invoke<DiagnosisSummary>("get_diagnosis_summary", { timeRangeMinutes }),
     detectAnomalies: (timeRangeMinutes?: number) =>
