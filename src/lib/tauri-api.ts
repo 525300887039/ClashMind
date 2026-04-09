@@ -160,6 +160,40 @@ export interface NodeHealthScore {
   evaluatedAt: string;
 }
 
+export interface OptimizationContext {
+  group: string;
+  currentNode: string | null;
+  nodes: string[];
+  healthScores: NodeHealthScore[];
+}
+
+export interface OptimizationSuggestion {
+  group: string;
+  currentNode: string | null;
+  targetNode: string;
+  reason: string;
+  currentScore: number | null;
+  currentGrade: HealthGrade | null;
+  targetScore: number | null;
+  targetGrade: HealthGrade | null;
+  scoreDelta: number | null;
+}
+
+export interface OptimizationToolParams {
+  group: string;
+  reason?: string;
+  name?: string;
+}
+
+export interface OptimizationToolResult {
+  action: "suggest_optimization" | "switch_proxy";
+  params: OptimizationToolParams;
+  status: "pending_confirmation" | "completed";
+  context: OptimizationContext;
+  suggestions: OptimizationSuggestion[];
+  message: string;
+}
+
 export interface DiagnosisApi {
   getOverview: (timeRangeMinutes?: number) => Promise<DiagnosisOverview>;
   getSummary: (timeRangeMinutes?: number) => Promise<DiagnosisSummary>;
@@ -391,6 +425,51 @@ function isNodeHealthScore(value: unknown): value is NodeHealthScore {
   );
 }
 
+function isOptimizationContext(value: unknown): value is OptimizationContext {
+  return (
+    isRecord(value) &&
+    typeof value.group === "string" &&
+    (value.currentNode === null || typeof value.currentNode === "string") &&
+    Array.isArray(value.nodes) &&
+    value.nodes.every((node) => typeof node === "string") &&
+    Array.isArray(value.healthScores) &&
+    value.healthScores.every(isNodeHealthScore)
+  );
+}
+
+function isOptimizationSuggestion(value: unknown): value is OptimizationSuggestion {
+  return (
+    isRecord(value) &&
+    typeof value.group === "string" &&
+    (value.currentNode === null || typeof value.currentNode === "string") &&
+    typeof value.targetNode === "string" &&
+    typeof value.reason === "string" &&
+    (value.currentScore === null ||
+      (typeof value.currentScore === "number" && Number.isFinite(value.currentScore))) &&
+    (value.currentGrade === null || isHealthGrade(value.currentGrade)) &&
+    (value.targetScore === null ||
+      (typeof value.targetScore === "number" && Number.isFinite(value.targetScore))) &&
+    (value.targetGrade === null || isHealthGrade(value.targetGrade)) &&
+    (value.scoreDelta === null ||
+      (typeof value.scoreDelta === "number" && Number.isFinite(value.scoreDelta)))
+  );
+}
+
+function isOptimizationToolAction(
+  value: unknown,
+): value is OptimizationToolResult["action"] {
+  return value === "suggest_optimization" || value === "switch_proxy";
+}
+
+function isOptimizationToolParams(value: unknown): value is OptimizationToolParams {
+  return (
+    isRecord(value) &&
+    typeof value.group === "string" &&
+    (value.reason === undefined || typeof value.reason === "string") &&
+    (value.name === undefined || typeof value.name === "string")
+  );
+}
+
 function isDiffChange(value: unknown): value is DiffChange {
   return (
     isRecord(value) &&
@@ -426,6 +505,19 @@ export function isPendingConfigChangeResult(
     Number.isInteger(value.confirmationBatchSize) &&
     value.confirmationBatchSize > 0 &&
     typeof value.isLatestInBatch === "boolean"
+  );
+}
+
+export function isOptimizationToolResult(value: unknown): value is OptimizationToolResult {
+  return (
+    isRecord(value) &&
+    isOptimizationToolAction(value.action) &&
+    isOptimizationToolParams(value.params) &&
+    (value.status === "pending_confirmation" || value.status === "completed") &&
+    isOptimizationContext(value.context) &&
+    Array.isArray(value.suggestions) &&
+    value.suggestions.every(isOptimizationSuggestion) &&
+    typeof value.message === "string"
   );
 }
 

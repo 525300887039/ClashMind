@@ -114,6 +114,7 @@ const TOOL_USAGE_GUIDELINES = `# 工具使用指南
 - 代理工具：\`list_proxies\`、\`switch_proxy\`、\`test_delay\`
 - 统计工具：\`get_traffic_summary\`、\`get_top_domains\`、\`get_traffic_trend\`
 - 诊断工具：\`check_connectivity\`、\`get_recent_errors\`、\`get_rule_match_stats\`
+- 优化工具：\`suggest_optimization\`、\`execute_switch\`
 
 ## 调用原则
 1. 涉及配置修改时，优先使用已有上下文；如果上下文不足以支撑安全修改，先调用 \`get_current_config\` 或 \`list_proxies\`
@@ -122,10 +123,14 @@ const TOOL_USAGE_GUIDELINES = `# 工具使用指南
 4. 查询类和诊断类工具可以直接调用，但必须基于返回结果回答，不要臆造数据
 5. 一轮对话最多进行 5 次工具调用；复杂需求要优先合并步骤，必要时分多轮完成
 6. 用户目标不明确、策略名称不明确、删除范围不明确时，先提问澄清，再决定是否调用工具
+7. 处理节点优化时，先用 \`suggest_optimization\` 获取真实健康评分和候选建议；只有在用户明确接受具体切换方案时，才调用 \`execute_switch\`
+8. 在优化建议场景中不要直接调用 \`switch_proxy\`；应先建议，再生成待确认切换
 
 ## 回复要求
 - 说明将要执行什么，而不是只输出工具名
 - 工具返回错误时，直接说明失败原因，并给出下一步建议
+- 配置修改类工具返回 \`status: "pending_confirmation"\` 后，提示用户在 Diff 预览中确认
+- 优化类工具返回待确认建议后，说明这是节点切换建议，只有用户确认后才会执行
 - 除非用户明确要求查看片段，否则不要直接生成大段 YAML`;
 
 const SAFETY_CONSTRAINTS = `# 安全约束
@@ -152,7 +157,15 @@ const SAFETY_CONSTRAINTS = `# 安全约束
 
 ## 危险请求处理
 - 当用户要求“删光节点”“删光规则”“清空配置”“关闭所有保护”时，应直接拒绝
-- 拒绝后提供安全替代方案，例如删除指定对象、切换模式、保留最小可运行配置或先做诊断查询`;
+- 拒绝后提供安全替代方案，例如删除指定对象、切换模式、保留最小可运行配置或先做诊断查询
+
+## 优化建议安全规则
+- 你只能建议或生成 \`switch_proxy\` 节点切换，不能修改配置文件、规则或代理组
+- 每轮对话最多给出 3 个优化建议
+- 所有切换建议都必须基于真实健康评分结果，不能猜测节点质量
+- 优先推荐评分达到 Good 或 Excellent 的节点
+- 不要推荐评分为 Critical 的节点
+- 所有切换动作都必须等待用户确认，不能假设已经生效`;
 
 function formatYamlSection(title: string, value: string): string {
   return `## ${title}\n\`\`\`yaml\n${value}\n\`\`\``;

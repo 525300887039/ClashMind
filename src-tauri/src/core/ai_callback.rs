@@ -1,11 +1,14 @@
-use std::path::Path;
+use std::{
+    collections::{BTreeSet, HashMap},
+    path::Path,
+};
 
 use chrono::{Duration as ChronoDuration, Utc};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::{
-    cmd::{self, stats::RuleStat, MihomoState},
+    cmd::{self, proxy, stats::RuleStat, MihomoState},
     collector::{CollectorState, RealtimeStore},
     core::{
         anomaly::{self, AnomalyThresholds},
@@ -89,6 +92,26 @@ struct NodeHealthParams {
     hours: Option<i32>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OptimizationParams {
+    group: String,
+    hours: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProxyMapResponse {
+    proxies: HashMap<String, RuntimeProxyGroupEntry>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct RuntimeProxyGroupEntry {
+    #[serde(default)]
+    now: String,
+    #[serde(default)]
+    all: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SelectedProxyGroup {
@@ -133,6 +156,15 @@ struct RuleMatchStatsSummary {
     match_hits: i64,
     match_rate: f64,
     rules: Vec<RuleStat>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OptimizationContext {
+    group: String,
+    current_node: Option<String>,
+    nodes: Vec<String>,
+    health_scores: Vec<node_health::NodeHealthScore>,
 }
 
 fn invalid_callback(message: impl Into<String>) -> AiSidecarError {
@@ -203,6 +235,74 @@ fn extract_selected_groups(proxies: &serde_json::Value) -> Vec<SelectedProxyGrou
 
     groups.sort_by(|left, right| left.group.cmp(&right.group));
     groups
+}
+
+fn parse_proxy_map(
+    proxies: &serde_json::Value,
+) -> Result<HashMap<String, RuntimeProxyGroupEntry>, AiSidecarError> {
+    serde_json::from_value::<ProxyMapResponse>(proxies.clone())
+        .map(|response| response.proxies)
+        .map_err(|error| invalid_callback(format!("解析代理组信息失败: {error}")))
+}
+
+fn normalize_group_nodes(nodes: &[String]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut normalized = Vec::new();
+
+    for node in nodes {
+        let candidate = node.trim();
+        if candidate.is_empty() || !seen.insert(candidate.to_string()) {
+            continue;
+        }
+
+        normalized.push(candidate.to_string());
+    }
+
+    normalized
+}
+
+fn resolve_current_node(group: Option<&RuntimeProxyGroupEntry>) -> Option<String> {
+    group.and_then(|entry| {
+        let current = entry.now.trim();
+        if current.is_empty() {
+            None
+        } else {
+            Some(current.to_string())
+        }
+    })
+}
+
+fn filter_group_health_scores(
+    health_scores: Vec<node_health::NodeHealthScore>,
+    group_nodes: &[String],
+) -> Vec<node_health::NodeHealthScore> {
+    let node_names = group_nodes
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+
+    health_scores
+        .into_iter()
+        .filter(|score| node_names.contains(score.node_name.as_str()))
+        .collect()
+}
+
+async fn load_group_health_scores(
+    app: &AppHandle,
+    group_nodes: &[String],
+    hours: i32,
+) -> Result<Vec<node_health::NodeHealthScore>, AiSidecarError> {
+    let db_pool = db::get_db_pool(app)
+        .await
+        .map_err(|error| invalid_callback(error.to_string()))?;
+    let aggregates = repo_node_health::get_all_nodes_health(&db_pool, hours)
+        .await
+        .map_err(|error| invalid_callback(error.to_string()))?;
+
+    Ok(filter_group_health_scores(
+        node_health::calculate_all_health_scores(&aggregates),
+        group_nodes,
+    ))
 }
 
 fn build_traffic_window(granularity: &TrafficGranularity, days: i32) -> (String, String) {
@@ -353,19 +453,14 @@ pub async fn handle_callback(
         "get_proxies" => with_mihomo_client(app, |client| Box::pin(client.get_proxies())).await,
         "test_delay" => {
             let params = parse_params::<DelayParams>(request.params)?;
-            let proxy_name = params.name.clone();
-            let delay = with_mihomo_client(app, move |client| {
-                Box::pin(async move {
-                    client
-                        .test_delay(
-                            &proxy_name,
-                            DEFAULT_DELAY_TEST_URL,
-                            DEFAULT_DELAY_TEST_TIMEOUT_MS,
-                        )
-                        .await
-                })
-            })
-            .await?;
+            let delay = proxy::run_delay_test_and_record(
+                app,
+                &params.name,
+                DEFAULT_DELAY_TEST_URL,
+                DEFAULT_DELAY_TEST_TIMEOUT_MS,
+            )
+            .await
+            .map_err(|error| invalid_callback(error.to_string()))?;
 
             Ok(serde_json::json!({
                 "name": params.name,
@@ -592,6 +687,44 @@ pub async fn handle_callback(
 
             serde_json::to_value(scores).map_err(|error| invalid_callback(error.to_string()))
         }
+        "get_optimization_context" => {
+            let params = parse_params::<OptimizationParams>(request.params)?;
+            let hours = bounded_i32(params.hours, 24, 1, 168, "hours")?;
+            let proxies = with_mihomo_client(app, |client| Box::pin(client.get_proxies())).await?;
+            let proxy_map = parse_proxy_map(&proxies)?;
+            let group_info = proxy_map.get(&params.group);
+            let group_nodes = group_info
+                .map(|entry| normalize_group_nodes(&entry.all))
+                .unwrap_or_default();
+            let current_node = resolve_current_node(group_info);
+            let mut health_scores = load_group_health_scores(app, &group_nodes, hours).await?;
+
+            if health_scores.is_empty() && !group_nodes.is_empty() {
+                if let Err(error) = proxy::run_group_delay_test_and_record(
+                    app,
+                    &params.group,
+                    DEFAULT_DELAY_TEST_URL,
+                    DEFAULT_DELAY_TEST_TIMEOUT_MS,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        "优化上下文测速预热失败: group={}, error={error}",
+                        params.group
+                    );
+                } else {
+                    health_scores = load_group_health_scores(app, &group_nodes, hours).await?;
+                }
+            }
+
+            serde_json::to_value(OptimizationContext {
+                group: params.group,
+                current_node,
+                nodes: group_nodes,
+                health_scores,
+            })
+            .map_err(|error| invalid_callback(error.to_string()))
+        }
         "detect_anomalies" => {
             let params = parse_params::<DiagnosisParams>(request.params)?;
             let time_range_minutes =
@@ -684,5 +817,63 @@ mod tests {
             redacted["tuic-server"]["private-key"],
             serde_json::json!(REDACTED_VALUE)
         );
+    }
+
+    #[test]
+    fn normalize_group_nodes_deduplicates_and_trims() {
+        let nodes = vec![
+            " Proxy-A ".to_string(),
+            "Proxy-B".to_string(),
+            "Proxy-A".to_string(),
+            "".to_string(),
+            "   ".to_string(),
+        ];
+
+        assert_eq!(
+            normalize_group_nodes(&nodes),
+            vec!["Proxy-A".to_string(), "Proxy-B".to_string()]
+        );
+    }
+
+    #[test]
+    fn filter_group_health_scores_keeps_only_group_members() {
+        let scores = vec![
+            node_health::NodeHealthScore {
+                node_name: "Proxy-A".to_string(),
+                score: 92.0,
+                grade: node_health::HealthGrade::Excellent,
+                success_rate: 0.99,
+                avg_delay_ms: Some(80.0),
+                total_tests: 20,
+                evaluated_at: "2026-04-09T00:00:00Z".to_string(),
+            },
+            node_health::NodeHealthScore {
+                node_name: "Proxy-B".to_string(),
+                score: 75.0,
+                grade: node_health::HealthGrade::Good,
+                success_rate: 0.95,
+                avg_delay_ms: Some(180.0),
+                total_tests: 20,
+                evaluated_at: "2026-04-09T00:00:00Z".to_string(),
+            },
+            node_health::NodeHealthScore {
+                node_name: "Proxy-C".to_string(),
+                score: 20.0,
+                grade: node_health::HealthGrade::Critical,
+                success_rate: 0.1,
+                avg_delay_ms: None,
+                total_tests: 20,
+                evaluated_at: "2026-04-09T00:00:00Z".to_string(),
+            },
+        ];
+
+        let filtered =
+            filter_group_health_scores(scores, &["Proxy-B".to_string(), "Proxy-A".to_string()]);
+        let filtered_names = filtered
+            .iter()
+            .map(|score| score.node_name.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(filtered_names, vec!["Proxy-A", "Proxy-B"]);
     }
 }

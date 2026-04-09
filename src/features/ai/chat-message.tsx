@@ -17,9 +17,10 @@ import {
   XCircle,
 } from "lucide-react";
 import { ConfigDiffPreview } from "./config-diff-preview";
+import { OptimizationCard } from "./optimization-card";
 import { useConfigApply } from "./hooks/use-config-apply";
 import { markdownComponents } from "./markdown-components";
-import { isPendingConfigChangeResult } from "@/lib/tauri-api";
+import { isOptimizationToolResult, isPendingConfigChangeResult } from "@/lib/tauri-api";
 import { cn } from "@/lib/utils";
 import type { AiMessage, AiToolCall } from "@/stores/ai-store";
 
@@ -157,6 +158,8 @@ function ToolCallCard({ toolCall }: { toolCall: AiToolCall }) {
   const meta = TOOL_STATUS_META[toolCall.status];
   const StatusIcon = meta.icon;
   const hasPendingDiff = isPendingConfigChangeResult(toolCall.result);
+  const optimizationResult = isOptimizationToolResult(toolCall.result) ? toolCall.result : null;
+  const hasOptimizationResult = optimizationResult !== null;
 
   return (
     <Accordion.Item
@@ -190,9 +193,14 @@ function ToolCallCard({ toolCall }: { toolCall: AiToolCall }) {
 
       <Accordion.Content className="overflow-hidden border-t border-border/70 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
         <div className="space-y-3 p-4">
-          <div className={cn("grid gap-3", hasPendingDiff ? "xl:grid-cols-1" : "xl:grid-cols-2")}>
+          <div
+            className={cn(
+              "grid gap-3",
+              hasPendingDiff || hasOptimizationResult ? "xl:grid-cols-1" : "xl:grid-cols-2",
+            )}
+          >
             <StructuredPanel label="参数" content={formatStructuredValue(toolCall.input)} />
-            {!hasPendingDiff ? (
+            {!hasPendingDiff && !hasOptimizationResult ? (
               <StructuredPanel
                 label="结果"
                 content={
@@ -205,6 +213,13 @@ function ToolCallCard({ toolCall }: { toolCall: AiToolCall }) {
           </div>
 
           {hasPendingDiff ? <PendingConfigToolResult toolCall={toolCall} /> : null}
+          {hasOptimizationResult ? (
+            <OptimizationCard
+              toolCallId={toolCall.id}
+              result={optimizationResult}
+              status={toolCall.status}
+            />
+          ) : null}
         </div>
       </Accordion.Content>
     </Accordion.Item>

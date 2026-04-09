@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import {
+  isOptimizationToolResult,
   isPendingConfigChangeResult,
   type AiChatRole,
   type ConfigApplyPayload,
@@ -143,9 +144,11 @@ export const useAiStore = create<AiStore>()((set, get) => ({
     }));
   },
   setToolCallResult: (messageId, toolCallId, result) => {
-    const nextStatus = isPendingConfigChangeResult(result)
-      ? "awaiting_confirmation"
-      : "completed";
+    const nextStatus =
+      isPendingConfigChangeResult(result) ||
+      (isOptimizationToolResult(result) && result.status === "pending_confirmation")
+        ? "awaiting_confirmation"
+        : "completed";
 
     set((state) => ({
       messages: state.messages.map((message) => {
