@@ -1,15 +1,19 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   api,
-  type AnomalyAlert,
   type DiagnosisOverview,
   type DiagnosisReport,
-  type DiagnosisSummary,
 } from "@/lib/tauri-api";
 import { normalizeError } from "@/lib/error";
 import { resolveAiProviderSettings } from "./use-ai-settings";
 
 const DIAGNOSIS_ROOT_KEY = ["diagnosis"] as const;
+
+const DIAGNOSIS_QUERY_OPTIONS = {
+  refetchInterval: 60_000,
+  staleTime: 30_000,
+  refetchOnWindowFocus: false,
+} as const;
 
 export const DIAGNOSIS_KEYS = {
   overview: (timeRangeMinutes: number) =>
@@ -32,31 +36,7 @@ export function useDiagnosisOverview(timeRangeMinutes = 30) {
   return useQuery<DiagnosisOverview, Error>({
     queryKey: DIAGNOSIS_KEYS.overview(timeRangeMinutes),
     queryFn: diagnosisOverviewQueryFn(timeRangeMinutes),
-    refetchInterval: 60_000,
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
-  });
-}
-
-export function useDiagnosisSummary(timeRangeMinutes = 30) {
-  return useQuery<DiagnosisOverview, Error, DiagnosisSummary>({
-    queryKey: DIAGNOSIS_KEYS.overview(timeRangeMinutes),
-    queryFn: diagnosisOverviewQueryFn(timeRangeMinutes),
-    select: (overview) => overview.summary,
-    refetchInterval: 60_000,
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
-  });
-}
-
-export function useAnomalyAlerts(timeRangeMinutes = 30) {
-  return useQuery<DiagnosisOverview, Error, AnomalyAlert[]>({
-    queryKey: DIAGNOSIS_KEYS.overview(timeRangeMinutes),
-    queryFn: diagnosisOverviewQueryFn(timeRangeMinutes),
-    select: (overview) => overview.alerts,
-    refetchInterval: 60_000,
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
+    ...DIAGNOSIS_QUERY_OPTIONS,
   });
 }
 
