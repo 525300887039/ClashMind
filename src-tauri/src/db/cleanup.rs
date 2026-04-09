@@ -4,7 +4,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tauri_plugin_sql::DbPool;
 
-use super::{sqlite_pool, DbError};
+use super::{repo_error_log, sqlite_pool, DbError};
 use crate::utils::time as time_utils;
 
 // Connection-backed stats expose a 30-day window in the UI, so raw rows must outlive that range.
@@ -12,6 +12,7 @@ const CONNECTION_RETENTION_DAYS: i32 = 30;
 const TRAFFIC_HOURLY_RETENTION_DAYS: i32 = 365;
 const DOMAIN_STATS_RETENTION_DAYS: i32 = 90;
 const GEOIP_CACHE_RETENTION_DAYS: i32 = 30;
+const ERROR_LOG_RETENTION_DAYS: i32 = 30;
 
 /// Summary returned after a full cleanup run.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -21,6 +22,7 @@ pub struct CleanupReport {
     pub hourly_deleted: usize,
     pub domain_stats_deleted: usize,
     pub geoip_deleted: usize,
+    pub error_logs_deleted: usize,
     pub executed_at: String,
 }
 
@@ -106,12 +108,15 @@ pub async fn run_full_cleanup(db: &DbPool) -> Result<CleanupReport, DbError> {
     let hourly_deleted = cleanup_traffic_hourly(db, TRAFFIC_HOURLY_RETENTION_DAYS).await?;
     let domain_stats_deleted = cleanup_domain_stats(db, DOMAIN_STATS_RETENTION_DAYS).await?;
     let geoip_deleted = cleanup_geoip_cache(db, GEOIP_CACHE_RETENTION_DAYS).await?;
+    let error_logs_deleted =
+        repo_error_log::cleanup_old_error_logs(db, ERROR_LOG_RETENTION_DAYS).await?;
 
     Ok(CleanupReport {
         connections_deleted,
         hourly_deleted,
         domain_stats_deleted,
         geoip_deleted,
+        error_logs_deleted,
         executed_at: time_utils::format_utc(Utc::now()),
     })
 }
@@ -197,6 +202,16 @@ CREATE TABLE geoip_cache (
     longitude    REAL,
     updated_at   TEXT NOT NULL
 );
+
+CREATE TABLE error_logs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    category   TEXT NOT NULL,
+    proxy_node TEXT,
+    host       TEXT,
+    rule       TEXT,
+    message    TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 "#,
         )
         .execute(&pool)
@@ -252,6 +267,10 @@ INSERT INTO domain_stats (domain, day, hit_count, upload, download) VALUES
 INSERT INTO geoip_cache (ip, country, country_code, city, latitude, longitude, updated_at) VALUES
     ('1.1.1.1', 'Australia', 'AU', 'Sydney', NULL, NULL, datetime('now', '-31 days')),
     ('8.8.8.8', 'United States', 'US', 'Mountain View', NULL, NULL, datetime('now', '-1 day'));
+
+INSERT INTO error_logs (category, proxy_node, host, rule, message, created_at) VALUES
+    ('timeout', 'Proxy-A', 'old.example', 'MATCH', 'old timeout', datetime('now', '-40 days')),
+    ('dns', 'Proxy-B', 'recent.example', 'RULE-SET', 'recent dns', datetime('now', '-2 days'));
 "#,
         )
         .execute(pool)
@@ -286,13 +305,21 @@ INSERT INTO geoip_cache (ip, country, country_code, city, latitude, longitude, u
         };
         assert_eq!(geoip_deleted, 1);
 
+        let error_logs_deleted = repo_error_log::cleanup_old_error_logs(&db, 30).await;
+        assert!(error_logs_deleted.is_ok());
+        let Ok(error_logs_deleted) = error_logs_deleted else {
+            panic!("error log cleanup should succeed");
+        };
+        assert_eq!(error_logs_deleted, 1);
+
         let counts = sqlx::query(
             r#"
 SELECT
     (SELECT COUNT(*) FROM connections) AS connection_count,
     (SELECT COUNT(*) FROM traffic_hourly) AS hourly_count,
     (SELECT COUNT(*) FROM domain_stats) AS domain_count,
-    (SELECT COUNT(*) FROM geoip_cache) AS geoip_count;
+    (SELECT COUNT(*) FROM geoip_cache) AS geoip_count,
+    (SELECT COUNT(*) FROM error_logs) AS error_log_count;
 "#,
         )
         .fetch_one(pool)
@@ -306,6 +333,7 @@ SELECT
         assert_eq!(counts.get::<i64, _>("hourly_count"), 1);
         assert_eq!(counts.get::<i64, _>("domain_count"), 1);
         assert_eq!(counts.get::<i64, _>("geoip_count"), 1);
+        assert_eq!(counts.get::<i64, _>("error_log_count"), 1);
     }
 
     #[tokio::test]
@@ -347,6 +375,9 @@ INSERT INTO domain_stats (domain, day, hit_count, upload, download) VALUES
 
 INSERT INTO geoip_cache (ip, updated_at) VALUES
     ('1.1.1.1', datetime('now', '-40 days'));
+
+INSERT INTO error_logs (category, message, created_at) VALUES
+    ('timeout', 'timeout old', datetime('now', '-40 days'));
 "#,
         )
         .execute(pool)
@@ -366,6 +397,7 @@ INSERT INTO geoip_cache (ip, updated_at) VALUES
                 hourly_deleted: 1,
                 domain_stats_deleted: 1,
                 geoip_deleted: 1,
+                error_logs_deleted: 1,
                 executed_at: report.executed_at.clone(),
             }
         );

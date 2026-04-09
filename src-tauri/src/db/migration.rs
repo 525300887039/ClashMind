@@ -215,6 +215,27 @@ CREATE INDEX IF NOT EXISTS idx_conversations_created_at ON ai_conversations(crea
 "#,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 13,
+            description: "create_error_logs_table",
+            sql: r#"
+CREATE TABLE IF NOT EXISTS error_logs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    category   TEXT NOT NULL,
+    proxy_node TEXT,
+    host       TEXT,
+    rule       TEXT,
+    message    TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_error_logs_category ON error_logs(category);
+CREATE INDEX IF NOT EXISTS idx_error_logs_created_at ON error_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_error_logs_proxy_node ON error_logs(proxy_node);
+CREATE INDEX IF NOT EXISTS idx_error_logs_host ON error_logs(host);
+"#,
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -539,5 +560,60 @@ WHERE type = 'index' AND name = 'idx_conversations_created_at';
         };
 
         assert_eq!(index_exists, 1);
+    }
+
+    #[tokio::test]
+    async fn error_logs_migration_is_idempotent() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await;
+        assert!(pool.is_ok());
+        let Ok(pool) = pool else {
+            panic!("sqlite pool should be created");
+        };
+
+        let first_run = execute_migration(13, &pool).await;
+        assert!(first_run.is_ok());
+        let second_run = execute_migration(13, &pool).await;
+        assert!(second_run.is_ok());
+
+        let table_exists = sqlx::query_scalar::<_, i64>(
+            r#"
+SELECT COUNT(*)
+FROM sqlite_master
+WHERE type = 'table' AND name = 'error_logs';
+"#,
+        )
+        .fetch_one(&pool)
+        .await;
+        assert!(table_exists.is_ok());
+        let Ok(table_exists) = table_exists else {
+            panic!("error_logs table should be queryable");
+        };
+
+        assert_eq!(table_exists, 1);
+
+        let index_count = sqlx::query_scalar::<_, i64>(
+            r#"
+SELECT COUNT(*)
+FROM sqlite_master
+WHERE type = 'index'
+  AND name IN (
+      'idx_error_logs_category',
+      'idx_error_logs_created_at',
+      'idx_error_logs_proxy_node',
+      'idx_error_logs_host'
+  );
+"#,
+        )
+        .fetch_one(&pool)
+        .await;
+        assert!(index_count.is_ok());
+        let Ok(index_count) = index_count else {
+            panic!("error_logs indexes should be queryable");
+        };
+
+        assert_eq!(index_count, 4);
     }
 }

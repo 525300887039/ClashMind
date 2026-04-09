@@ -4,6 +4,7 @@ pub mod plugin;
 pub mod repo_connection;
 pub mod repo_conversation;
 pub mod repo_domain;
+pub mod repo_error_log;
 pub mod repo_geoip;
 pub mod repo_snapshot;
 pub mod repo_traffic;
