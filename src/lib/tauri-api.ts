@@ -115,6 +115,25 @@ export interface DiagnosisSummary {
   generatedAt: string;
 }
 
+export type AlertSeverity = "critical" | "warning" | "info";
+
+export type AlertType =
+  | "high_timeout_rate"
+  | "traffic_surge"
+  | "traffic_drop"
+  | "high_match_fallback"
+  | "dns_failure_cluster";
+
+export interface AnomalyAlert {
+  id: string;
+  severity: AlertSeverity;
+  alertType: AlertType;
+  title: string;
+  description: string;
+  context: Record<string, unknown>;
+  detectedAt: string;
+}
+
 export type AiProviderKind = "openai" | "openai_compatible" | "claude" | "gemini";
 
 export type AiChatRole = "user" | "assistant" | "system";
@@ -420,6 +439,8 @@ export const api = {
   diagnosis: {
     getSummary: (timeRangeMinutes?: number) =>
       invoke<DiagnosisSummary>("get_diagnosis_summary", { timeRangeMinutes }),
+    detectAnomalies: (timeRangeMinutes?: number) =>
+      invoke<AnomalyAlert[]>("detect_anomalies", { timeRangeMinutes }),
   },
   config: {
     read: (path: string) => invoke<string>("read_config", { path }),

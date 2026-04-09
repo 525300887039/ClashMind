@@ -1,4 +1,5 @@
 pub mod ai_callback;
+pub mod anomaly;
 pub mod diagnosis;
 pub mod logs;
 pub mod mihomo;
