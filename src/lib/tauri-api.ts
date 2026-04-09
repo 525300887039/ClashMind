@@ -87,8 +87,10 @@ export interface GeoStat {
   totalTraffic: number;
 }
 
+export type ErrorCategory = "timeout" | "dns" | "tls" | "connection" | "other";
+
 export interface ErrorCategoryCount {
-  category: string;
+  category: ErrorCategory;
   count: number;
 }
 
