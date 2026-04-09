@@ -12,6 +12,8 @@ use crate::utils::impl_serialize_display;
 
 use crate::{
     core::{
+        anomaly::AnomalyAlert,
+        diagnosis::DiagnosisSummary,
         mihomo::MihomoError,
         sidecar::{self, AiSidecarError, AiSidecarState},
     },
@@ -359,6 +361,15 @@ pub struct ReportResult {
     pub generated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosisReport {
+    pub report: String,
+    pub summary: DiagnosisSummary,
+    pub alerts: Vec<AnomalyAlert>,
+    pub generated_at: String,
+}
+
 #[derive(Error, Debug)]
 pub enum AiConfigChangeError {
     #[error("{0}")]
@@ -411,6 +422,18 @@ pub enum AiReportError {
 }
 
 impl_serialize_display!(AiReportError);
+
+#[derive(Error, Debug)]
+pub enum AiDiagnosisError {
+    #[error("{0}")]
+    Sidecar(#[from] AiSidecarError),
+    #[error("诊断参数无效: {0}")]
+    InvalidParams(String),
+    #[error("诊断结果无效: {0}")]
+    InvalidResult(String),
+}
+
+impl_serialize_display!(AiDiagnosisError);
 
 #[derive(Error, Debug)]
 pub enum AiSettingsError {
@@ -971,6 +994,26 @@ fn build_report_rpc_payload(
     payload
 }
 
+fn build_diagnosis_rpc_payload(
+    time_range_minutes: Option<i32>,
+    settings: AiProviderSettings,
+) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "settings": settings,
+    });
+
+    if let Some(time_range_minutes) = time_range_minutes {
+        if let Some(object) = payload.as_object_mut() {
+            object.insert(
+                "timeRangeMinutes".into(),
+                serde_json::Value::Number(time_range_minutes.into()),
+            );
+        }
+    }
+
+    payload
+}
+
 #[tauri::command]
 pub async fn start_ai_service(
     app: AppHandle,
@@ -1112,6 +1155,36 @@ pub async fn ai_generate_report(
 
     serde_json::from_value(response)
         .map_err(|error| AiReportError::InvalidResult(error.to_string()))
+}
+
+#[tauri::command]
+pub async fn ai_generate_diagnosis(
+    app: AppHandle,
+    state: tauri::State<'_, AiSidecarState>,
+    time_range_minutes: Option<i32>,
+    settings: AiProviderSettings,
+) -> Result<DiagnosisReport, AiDiagnosisError> {
+    if settings.model.trim().is_empty() {
+        return Err(AiDiagnosisError::InvalidParams(
+            "diagnosis model must not be empty".to_string(),
+        ));
+    }
+
+    if !sidecar::is_ai_running(&state) {
+        sidecar::start_ai(&app, &state).await?;
+    }
+
+    let payload = build_diagnosis_rpc_payload(time_range_minutes, settings);
+    let response = sidecar::send_rpc_with_timeout(
+        &state,
+        "generate_diagnosis",
+        Some(payload),
+        REPORT_RPC_TIMEOUT,
+    )
+    .await?;
+
+    serde_json::from_value(response)
+        .map_err(|error| AiDiagnosisError::InvalidResult(error.to_string()))
 }
 
 #[tauri::command]
@@ -1354,6 +1427,15 @@ mod tests {
             payload.get("type").and_then(serde_json::Value::as_str),
             Some("daily")
         );
+    }
+
+    #[test]
+    fn diagnosis_payload_omits_absent_time_range() {
+        let payload =
+            build_diagnosis_rpc_payload(None, AiSettings::default().to_provider_settings());
+
+        assert!(payload.get("timeRangeMinutes").is_none());
+        assert!(payload.get("settings").is_some());
     }
 
     #[test]

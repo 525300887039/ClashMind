@@ -1,6 +1,7 @@
 import { generateText, stepCountIs, streamText } from "ai";
 import { z } from "zod";
 
+import { buildDiagnosisPrompt } from "./prompts/diagnosis.js";
 import { assemblePrompt } from "./prompts/index.js";
 import { buildReportPrompt } from "./prompts/report.js";
 import { createModel, listModels } from "./providers/index.js";
@@ -19,8 +20,12 @@ import { allTools } from "./tools/index.js";
 import { getErrorMessage } from "./utils.js";
 import { handleRustCallbackResponse, requestFromRust } from "./tools/rust-rpc.js";
 import {
+  anomalyAlertSchema,
   chatParamsSchema,
   connectionTestParamsSchema,
+  diagnosisParamsSchema,
+  diagnosisResultSchema,
+  diagnosisSummarySchema,
   modelCatalogParamsSchema,
   modelCatalogResultSchema,
   type ChatParams,
@@ -541,6 +546,50 @@ registerHandler("generate_report", async (params) => {
     stats: parsedStats.data.stats,
     generatedAt: new Date().toISOString(),
   };
+});
+
+registerHandler("generate_diagnosis", async (params) => {
+  const parsedParams = diagnosisParamsSchema.safeParse(params);
+
+  if (!parsedParams.success) {
+    throw new Error(parsedParams.error.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const diagnosisParams = parsedParams.data;
+  const summaryResponse = await requestFromRust("get_diagnosis_summary", {
+    timeRangeMinutes: diagnosisParams.timeRangeMinutes,
+  });
+  const alertsResponse = await requestFromRust("detect_anomalies", {
+    timeRangeMinutes: diagnosisParams.timeRangeMinutes,
+  });
+
+  const parsedSummary = diagnosisSummarySchema.safeParse(summaryResponse);
+  if (!parsedSummary.success) {
+    throw new Error(parsedSummary.error.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const alertsSchema = z.array(anomalyAlertSchema);
+  const parsedAlerts = alertsSchema.safeParse(alertsResponse);
+  if (!parsedAlerts.success) {
+    throw new Error(parsedAlerts.error.issues.map((issue) => issue.message).join("; "));
+  }
+
+  const prompt = buildDiagnosisPrompt(parsedSummary.data, parsedAlerts.data);
+  const { text } = await generateText({
+    model: createModel(diagnosisParams.settings),
+    prompt,
+    ...(diagnosisParams.settings.maxTokens === undefined
+      ? {}
+      : { maxOutputTokens: diagnosisParams.settings.maxTokens }),
+    temperature: 0.3,
+  });
+
+  return diagnosisResultSchema.parse({
+    report: text.trim(),
+    summary: parsedSummary.data,
+    alerts: parsedAlerts.data,
+    generatedAt: new Date().toISOString(),
+  });
 });
 
 export function registerHandler(method: string, handler: JsonRpcHandler): void {

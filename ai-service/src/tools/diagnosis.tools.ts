@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 
+import { diagnosisToolParamsSchema } from "../types.js";
 import { requestFromRust } from "./rust-rpc.js";
 
 const emptyParameters = z.object({}).strict();
@@ -34,5 +35,11 @@ export const diagnosisTools = {
     description: "获取规则匹配统计，便于判断 MATCH 兜底比例",
     inputSchema: ruleMatchStatsParameters,
     execute: async (params) => requestFromRust("get_rule_stats", params),
+  }),
+
+  run_diagnosis: tool({
+    description: "运行完整诊断流程，返回诊断摘要和异常告警数据",
+    inputSchema: diagnosisToolParamsSchema,
+    execute: async (params) => requestFromRust("run_full_diagnosis", params),
   }),
 };

@@ -7,7 +7,11 @@ use tauri::{AppHandle, Manager};
 use crate::{
     cmd::{self, stats::RuleStat, MihomoState},
     collector::{CollectorState, RealtimeStore},
-    core::sidecar::AiSidecarError,
+    core::{
+        anomaly::{self, AnomalyThresholds},
+        diagnosis,
+        sidecar::AiSidecarError,
+    },
     db::{self, repo_connection},
     utils::{geoip::GeoIpConfigState, path::expand_tilde, time},
 };
@@ -71,6 +75,12 @@ struct ReportStatsParams {
     #[serde(rename = "type")]
     report_type: cmd::ai::ReportType,
     date: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DiagnosisParams {
+    time_range_minutes: Option<i32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -549,6 +559,56 @@ pub async fn handle_callback(
                 .map_err(|error| invalid_callback(error.to_string()))?;
 
             serde_json::to_value(report).map_err(|error| invalid_callback(error.to_string()))
+        }
+        "get_diagnosis_summary" => {
+            let params = parse_params::<DiagnosisParams>(request.params)?;
+            let time_range_minutes =
+                bounded_i32(params.time_range_minutes, 30, 5, 1_440, "timeRangeMinutes")?;
+            let db_pool = db::get_db_pool(app)
+                .await
+                .map_err(|error| invalid_callback(error.to_string()))?;
+            let summary = diagnosis::generate_diagnosis_summary(&db_pool, time_range_minutes)
+                .await
+                .map_err(|error| invalid_callback(error.to_string()))?;
+
+            serde_json::to_value(summary).map_err(|error| invalid_callback(error.to_string()))
+        }
+        "detect_anomalies" => {
+            let params = parse_params::<DiagnosisParams>(request.params)?;
+            let time_range_minutes =
+                bounded_i32(params.time_range_minutes, 30, 5, 1_440, "timeRangeMinutes")?;
+            let db_pool = db::get_db_pool(app)
+                .await
+                .map_err(|error| invalid_callback(error.to_string()))?;
+            let summary = diagnosis::generate_diagnosis_summary(&db_pool, time_range_minutes)
+                .await
+                .map_err(|error| invalid_callback(error.to_string()))?;
+            let alerts =
+                anomaly::detect_anomalies(&db_pool, &summary, &AnomalyThresholds::default())
+                    .await
+                    .map_err(|error| invalid_callback(error.to_string()))?;
+
+            serde_json::to_value(alerts).map_err(|error| invalid_callback(error.to_string()))
+        }
+        "run_full_diagnosis" => {
+            let params = parse_params::<DiagnosisParams>(request.params)?;
+            let time_range_minutes =
+                bounded_i32(params.time_range_minutes, 30, 5, 1_440, "timeRangeMinutes")?;
+            let db_pool = db::get_db_pool(app)
+                .await
+                .map_err(|error| invalid_callback(error.to_string()))?;
+            let summary = diagnosis::generate_diagnosis_summary(&db_pool, time_range_minutes)
+                .await
+                .map_err(|error| invalid_callback(error.to_string()))?;
+            let alerts =
+                anomaly::detect_anomalies(&db_pool, &summary, &AnomalyThresholds::default())
+                    .await
+                    .map_err(|error| invalid_callback(error.to_string()))?;
+
+            Ok(serde_json::json!({
+                "summary": summary,
+                "alerts": alerts,
+            }))
         }
         other_method => Err(invalid_callback(format!(
             "未知 callback 方法: {other_method}; callbackId={}",

@@ -56,6 +56,115 @@ export const chatParamsSchema = z
 
 export interface ChatParams extends z.infer<typeof chatParamsSchema> {}
 
+export const errorCategoryCountSchema = z
+  .object({
+    category: z.string().min(1),
+    count: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export interface ErrorCategoryCount extends z.infer<typeof errorCategoryCountSchema> {}
+
+export const proxyErrorCountSchema = z
+  .object({
+    proxyNode: z.string().min(1),
+    count: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export interface ProxyErrorCount extends z.infer<typeof proxyErrorCountSchema> {}
+
+export const hostFailureRateSchema = z
+  .object({
+    host: z.string().min(1),
+    failureCount: z.number().int().nonnegative(),
+    totalCount: z.number().int().nonnegative(),
+    failureRate: z.number().finite().nonnegative(),
+  })
+  .strict();
+
+export interface HostFailureRate extends z.infer<typeof hostFailureRateSchema> {}
+
+export const diagnosisSummarySchema = z
+  .object({
+    timeRangeMinutes: z.number().int().min(1),
+    errorStats: z.array(errorCategoryCountSchema),
+    topErrorNodes: z.array(proxyErrorCountSchema),
+    topFailureHosts: z.array(hostFailureRateSchema),
+    dnsErrorCount: z.number().int().nonnegative(),
+    matchFallbackCount: z.number().int().nonnegative(),
+    totalConnections: z.number().int().nonnegative(),
+    generatedAt: z.string().min(1),
+  })
+  .strict();
+
+export interface DiagnosisSummary extends z.infer<typeof diagnosisSummarySchema> {}
+
+export const alertSeveritySchema = z.enum(["critical", "warning", "info"]);
+
+export type AlertSeverity = z.infer<typeof alertSeveritySchema>;
+
+export const alertTypeSchema = z.enum([
+  "high_timeout_rate",
+  "traffic_surge",
+  "traffic_drop",
+  "high_match_fallback",
+  "dns_failure_cluster",
+]);
+
+export type AlertType = z.infer<typeof alertTypeSchema>;
+
+export const anomalyAlertSchema = z
+  .object({
+    id: z.string().min(1),
+    severity: alertSeveritySchema,
+    alertType: alertTypeSchema,
+    title: z.string().min(1),
+    description: z.string().min(1),
+    context: z.record(z.string(), z.unknown()),
+    detectedAt: z.string().min(1),
+  })
+  .strict();
+
+export interface AnomalyAlert extends z.infer<typeof anomalyAlertSchema> {}
+
+export const diagnosisToolParamsSchema = z
+  .object({
+    timeRangeMinutes: z.number().int().min(5).max(1_440).default(30),
+  })
+  .strict();
+
+export interface DiagnosisToolParams extends z.infer<typeof diagnosisToolParamsSchema> {}
+
+export const diagnosisParamsSchema = z
+  .object({
+    timeRangeMinutes: z.number().int().min(5).max(1_440).default(30),
+    settings: providerSettingsSchema,
+  })
+  .strict();
+
+export interface DiagnosisParams extends z.infer<typeof diagnosisParamsSchema> {}
+
+export const diagnosisPayloadSchema = z
+  .object({
+    summary: diagnosisSummarySchema,
+    alerts: z.array(anomalyAlertSchema),
+  })
+  .strict();
+
+export interface DiagnosisPayload extends z.infer<typeof diagnosisPayloadSchema> {}
+
+export const diagnosisResultSchema = z
+  .object({
+    report: z.string().min(1),
+    summary: diagnosisSummarySchema,
+    alerts: z.array(anomalyAlertSchema),
+    generatedAt: z.string().min(1),
+  })
+  .strict();
+
+export interface DiagnosisResult extends z.infer<typeof diagnosisResultSchema> {}
+
 export const reportTypeSchema = z.enum(["daily", "weekly"]);
 
 export type ReportType = z.infer<typeof reportTypeSchema>;

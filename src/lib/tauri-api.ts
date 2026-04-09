@@ -134,6 +134,13 @@ export interface AnomalyAlert {
   detectedAt: string;
 }
 
+export interface DiagnosisReport {
+  report: string;
+  summary: DiagnosisSummary;
+  alerts: AnomalyAlert[];
+  generatedAt: string;
+}
+
 export type AiProviderKind = "openai" | "openai_compatible" | "claude" | "gemini";
 
 export type AiChatRole = "user" | "assistant" | "system";
@@ -387,6 +394,14 @@ export const api = {
       invoke<ReportResult>("ai_generate_report", {
         reportType: type,
         date,
+        settings,
+      }),
+    generateDiagnosis: (
+      timeRangeMinutes: number | undefined,
+      settings: AiProviderSettings,
+    ) =>
+      invoke<DiagnosisReport>("ai_generate_diagnosis", {
+        timeRangeMinutes,
         settings,
       }),
     ping: () => invoke<AiPingResponse>("ai_ping"),
