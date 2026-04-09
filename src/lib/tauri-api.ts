@@ -115,6 +115,8 @@ export interface DiagnosisSummary {
   generatedAt: string;
 }
 
+export type DiagnosisTimeRangeMinutes = 15 | 30 | 60 | 360 | 1440;
+
 export type AlertSeverity = "critical" | "warning" | "info";
 
 export type AlertType =
@@ -139,6 +141,11 @@ export interface DiagnosisReport {
   summary: DiagnosisSummary;
   alerts: AnomalyAlert[];
   generatedAt: string;
+}
+
+export interface DiagnosisApi {
+  getSummary: (timeRangeMinutes?: number) => Promise<DiagnosisSummary>;
+  detectAnomalies: (timeRangeMinutes?: number) => Promise<AnomalyAlert[]>;
 }
 
 export type AiProviderKind = "openai" | "openai_compatible" | "claude" | "gemini";
@@ -456,7 +463,7 @@ export const api = {
       invoke<DiagnosisSummary>("get_diagnosis_summary", { timeRangeMinutes }),
     detectAnomalies: (timeRangeMinutes?: number) =>
       invoke<AnomalyAlert[]>("detect_anomalies", { timeRangeMinutes }),
-  },
+  } satisfies DiagnosisApi,
   config: {
     read: (path: string) => invoke<string>("read_config", { path }),
     write: (path: string, content: string) => invoke("write_config", { path, content }),
