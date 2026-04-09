@@ -4,7 +4,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tauri_plugin_sql::DbPool;
 
-use super::{repo_error_log, sqlite_pool, DbError};
+use super::{repo_error_log, repo_node_health, sqlite_pool, DbError};
 use crate::utils::time as time_utils;
 
 // Connection-backed stats expose a 30-day window in the UI, so raw rows must outlive that range.
@@ -13,6 +13,7 @@ const TRAFFIC_HOURLY_RETENTION_DAYS: i32 = 365;
 const DOMAIN_STATS_RETENTION_DAYS: i32 = 90;
 const GEOIP_CACHE_RETENTION_DAYS: i32 = 30;
 const ERROR_LOG_RETENTION_DAYS: i32 = 30;
+const NODE_HEALTH_RETENTION_DAYS: i32 = 30;
 
 /// Summary returned after a full cleanup run.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -23,6 +24,7 @@ pub struct CleanupReport {
     pub domain_stats_deleted: usize,
     pub geoip_deleted: usize,
     pub error_logs_deleted: usize,
+    pub node_health_snapshots_deleted: usize,
     pub executed_at: String,
 }
 
@@ -110,6 +112,8 @@ pub async fn run_full_cleanup(db: &DbPool) -> Result<CleanupReport, DbError> {
     let geoip_deleted = cleanup_geoip_cache(db, GEOIP_CACHE_RETENTION_DAYS).await?;
     let error_logs_deleted =
         repo_error_log::cleanup_old_error_logs(db, ERROR_LOG_RETENTION_DAYS).await?;
+    let node_health_snapshots_deleted =
+        repo_node_health::cleanup_old_snapshots(db, NODE_HEALTH_RETENTION_DAYS).await?;
 
     Ok(CleanupReport {
         connections_deleted,
@@ -117,6 +121,7 @@ pub async fn run_full_cleanup(db: &DbPool) -> Result<CleanupReport, DbError> {
         domain_stats_deleted,
         geoip_deleted,
         error_logs_deleted,
+        node_health_snapshots_deleted,
         executed_at: time_utils::format_utc(Utc::now()),
     })
 }
@@ -212,6 +217,14 @@ CREATE TABLE error_logs (
     message    TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE node_health_snapshots (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_name TEXT NOT NULL,
+    delay_ms  INTEGER,
+    success   INTEGER NOT NULL,
+    tested_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 "#,
         )
         .execute(&pool)
@@ -271,6 +284,10 @@ INSERT INTO geoip_cache (ip, country, country_code, city, latitude, longitude, u
 INSERT INTO error_logs (category, proxy_node, host, rule, message, created_at) VALUES
     ('timeout', 'Proxy-A', 'old.example', 'MATCH', 'old timeout', datetime('now', '-40 days')),
     ('dns', 'Proxy-B', 'recent.example', 'RULE-SET', 'recent dns', datetime('now', '-2 days'));
+
+INSERT INTO node_health_snapshots (node_name, delay_ms, success, tested_at) VALUES
+    ('Proxy-A', 120, 1, datetime('now', '-40 days')),
+    ('Proxy-B', 90, 1, datetime('now', '-2 days'));
 "#,
         )
         .execute(pool)
@@ -312,6 +329,13 @@ INSERT INTO error_logs (category, proxy_node, host, rule, message, created_at) V
         };
         assert_eq!(error_logs_deleted, 1);
 
+        let node_health_deleted = repo_node_health::cleanup_old_snapshots(&db, 30).await;
+        assert!(node_health_deleted.is_ok());
+        let Ok(node_health_deleted) = node_health_deleted else {
+            panic!("node health cleanup should succeed");
+        };
+        assert_eq!(node_health_deleted, 1);
+
         let counts = sqlx::query(
             r#"
 SELECT
@@ -319,7 +343,8 @@ SELECT
     (SELECT COUNT(*) FROM traffic_hourly) AS hourly_count,
     (SELECT COUNT(*) FROM domain_stats) AS domain_count,
     (SELECT COUNT(*) FROM geoip_cache) AS geoip_count,
-    (SELECT COUNT(*) FROM error_logs) AS error_log_count;
+    (SELECT COUNT(*) FROM error_logs) AS error_log_count,
+    (SELECT COUNT(*) FROM node_health_snapshots) AS node_health_count;
 "#,
         )
         .fetch_one(pool)
@@ -334,6 +359,7 @@ SELECT
         assert_eq!(counts.get::<i64, _>("domain_count"), 1);
         assert_eq!(counts.get::<i64, _>("geoip_count"), 1);
         assert_eq!(counts.get::<i64, _>("error_log_count"), 1);
+        assert_eq!(counts.get::<i64, _>("node_health_count"), 1);
     }
 
     #[tokio::test]
@@ -378,6 +404,9 @@ INSERT INTO geoip_cache (ip, updated_at) VALUES
 
 INSERT INTO error_logs (category, message, created_at) VALUES
     ('timeout', 'timeout old', datetime('now', '-40 days'));
+
+INSERT INTO node_health_snapshots (node_name, delay_ms, success, tested_at) VALUES
+    ('Proxy-A', 120, 1, datetime('now', '-40 days'));
 "#,
         )
         .execute(pool)
@@ -398,6 +427,7 @@ INSERT INTO error_logs (category, message, created_at) VALUES
                 domain_stats_deleted: 1,
                 geoip_deleted: 1,
                 error_logs_deleted: 1,
+                node_health_snapshots_deleted: 1,
                 executed_at: report.executed_at.clone(),
             }
         );

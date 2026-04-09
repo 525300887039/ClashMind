@@ -9,10 +9,10 @@ use crate::{
     collector::{CollectorState, RealtimeStore},
     core::{
         anomaly::{self, AnomalyThresholds},
-        diagnosis,
+        diagnosis, node_health,
         sidecar::AiSidecarError,
     },
-    db::{self, repo_connection},
+    db::{self, repo_connection, repo_node_health},
     utils::{geoip::GeoIpConfigState, path::expand_tilde, time},
 };
 
@@ -81,6 +81,12 @@ struct ReportStatsParams {
 #[serde(rename_all = "camelCase")]
 struct DiagnosisParams {
     time_range_minutes: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NodeHealthParams {
+    hours: Option<i32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -572,6 +578,19 @@ pub async fn handle_callback(
                 .map_err(|error| invalid_callback(error.to_string()))?;
 
             serde_json::to_value(summary).map_err(|error| invalid_callback(error.to_string()))
+        }
+        "get_node_health" => {
+            let params = parse_params::<NodeHealthParams>(request.params)?;
+            let hours = bounded_i32(params.hours, 24, 1, 168, "hours")?;
+            let db_pool = db::get_db_pool(app)
+                .await
+                .map_err(|error| invalid_callback(error.to_string()))?;
+            let aggregates = repo_node_health::get_all_nodes_health(&db_pool, hours)
+                .await
+                .map_err(|error| invalid_callback(error.to_string()))?;
+            let scores = node_health::calculate_all_health_scores(&aggregates);
+
+            serde_json::to_value(scores).map_err(|error| invalid_callback(error.to_string()))
         }
         "detect_anomalies" => {
             let params = parse_params::<DiagnosisParams>(request.params)?;

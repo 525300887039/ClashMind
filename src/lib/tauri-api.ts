@@ -148,10 +148,28 @@ export interface DiagnosisOverview {
   alerts: AnomalyAlert[];
 }
 
+export type HealthGrade = "excellent" | "good" | "fair" | "poor" | "critical";
+
+export interface NodeHealthScore {
+  nodeName: string;
+  score: number;
+  grade: HealthGrade;
+  successRate: number;
+  avgDelayMs: number | null;
+  totalTests: number;
+  evaluatedAt: string;
+}
+
 export interface DiagnosisApi {
   getOverview: (timeRangeMinutes?: number) => Promise<DiagnosisOverview>;
   getSummary: (timeRangeMinutes?: number) => Promise<DiagnosisSummary>;
   detectAnomalies: (timeRangeMinutes?: number) => Promise<AnomalyAlert[]>;
+  getNodeHealth: (hours?: number) => Promise<NodeHealthScore[]>;
+  recordDelayTest: (
+    nodeName: string,
+    delayMs: number | null,
+    success: boolean,
+  ) => Promise<void>;
 }
 
 export type AiProviderKind = "openai" | "openai_compatible" | "claude" | "gemini";
@@ -345,6 +363,34 @@ function isConfigChangeAction(value: unknown): value is ConfigChangeAction {
   return typeof value === "string" && CONFIG_CHANGE_ACTIONS.includes(value as ConfigChangeAction);
 }
 
+function isHealthGrade(value: unknown): value is HealthGrade {
+  return (
+    value === "excellent" ||
+    value === "good" ||
+    value === "fair" ||
+    value === "poor" ||
+    value === "critical"
+  );
+}
+
+function isNodeHealthScore(value: unknown): value is NodeHealthScore {
+  return (
+    isRecord(value) &&
+    typeof value.nodeName === "string" &&
+    typeof value.score === "number" &&
+    Number.isFinite(value.score) &&
+    isHealthGrade(value.grade) &&
+    typeof value.successRate === "number" &&
+    Number.isFinite(value.successRate) &&
+    (value.avgDelayMs === null ||
+      (typeof value.avgDelayMs === "number" && Number.isFinite(value.avgDelayMs))) &&
+    typeof value.totalTests === "number" &&
+    Number.isInteger(value.totalTests) &&
+    value.totalTests >= 0 &&
+    typeof value.evaluatedAt === "string"
+  );
+}
+
 function isDiffChange(value: unknown): value is DiffChange {
   return (
     isRecord(value) &&
@@ -471,6 +517,10 @@ export const api = {
       invoke<DiagnosisSummary>("get_diagnosis_summary", { timeRangeMinutes }),
     detectAnomalies: (timeRangeMinutes?: number) =>
       invoke<AnomalyAlert[]>("detect_anomalies", { timeRangeMinutes }),
+    getNodeHealth: (hours?: number) =>
+      invoke<NodeHealthScore[]>("get_node_health", { hours }),
+    recordDelayTest: (nodeName: string, delayMs: number | null, success: boolean) =>
+      invoke<void>("record_delay_test", { nodeName, delayMs, success }),
   } satisfies DiagnosisApi,
   config: {
     read: (path: string) => invoke<string>("read_config", { path }),

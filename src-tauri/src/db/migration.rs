@@ -236,6 +236,23 @@ CREATE INDEX IF NOT EXISTS idx_error_logs_host ON error_logs(host);
 "#,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 14,
+            description: "create_node_health_snapshots_table",
+            sql: r#"
+CREATE TABLE IF NOT EXISTS node_health_snapshots (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_name TEXT NOT NULL,
+    delay_ms  INTEGER,
+    success   INTEGER NOT NULL,
+    tested_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_node_health_node_name ON node_health_snapshots(node_name);
+CREATE INDEX IF NOT EXISTS idx_node_health_tested_at ON node_health_snapshots(tested_at);
+"#,
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -615,5 +632,58 @@ WHERE type = 'index'
         };
 
         assert_eq!(index_count, 4);
+    }
+
+    #[tokio::test]
+    async fn node_health_snapshots_migration_is_idempotent() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await;
+        assert!(pool.is_ok());
+        let Ok(pool) = pool else {
+            panic!("sqlite pool should be created");
+        };
+
+        let first_run = execute_migration(14, &pool).await;
+        assert!(first_run.is_ok());
+        let second_run = execute_migration(14, &pool).await;
+        assert!(second_run.is_ok());
+
+        let table_exists = sqlx::query_scalar::<_, i64>(
+            r#"
+SELECT COUNT(*)
+FROM sqlite_master
+WHERE type = 'table' AND name = 'node_health_snapshots';
+"#,
+        )
+        .fetch_one(&pool)
+        .await;
+        assert!(table_exists.is_ok());
+        let Ok(table_exists) = table_exists else {
+            panic!("node_health_snapshots table should be queryable");
+        };
+
+        assert_eq!(table_exists, 1);
+
+        let index_count = sqlx::query_scalar::<_, i64>(
+            r#"
+SELECT COUNT(*)
+FROM sqlite_master
+WHERE type = 'index'
+  AND name IN (
+      'idx_node_health_node_name',
+      'idx_node_health_tested_at'
+  );
+"#,
+        )
+        .fetch_one(&pool)
+        .await;
+        assert!(index_count.is_ok());
+        let Ok(index_count) = index_count else {
+            panic!("node_health_snapshots indexes should be queryable");
+        };
+
+        assert_eq!(index_count, 2);
     }
 }

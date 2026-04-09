@@ -3,6 +3,7 @@ pub mod anomaly;
 pub mod diagnosis;
 pub mod logs;
 pub mod mihomo;
+pub mod node_health;
 pub mod sidecar;
 pub mod sysproxy;
 pub mod traffic;
