@@ -1,4 +1,7 @@
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{BTreeSet, HashMap},
+    time::Duration,
+};
 
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
@@ -9,7 +12,14 @@ use tokio::{
     sync::watch,
     time::{self, MissedTickBehavior},
 };
-use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{
+        protocol::{frame::coding::CloseCode, CloseFrame},
+        Message,
+    },
+    MaybeTlsStream, WebSocketStream,
+};
 use tracing::{info, warn};
 
 use crate::{
@@ -21,6 +31,7 @@ use crate::{
         self,
         repo_connection::{self, BatchPersistPayload, RuleStatsUpdate},
         repo_domain::DomainStatsUpdate,
+        repo_error_log::{self, ErrorLogInsert},
         repo_geoip::IpTrafficStatsUpdate,
         repo_traffic::TrafficSampleInsert,
         DbError,
@@ -511,16 +522,37 @@ async fn collect_stream<R: Runtime>(
             }
             Some(Ok(Message::Close(frame))) => {
                 info!(?frame, "collector WebSocket 已关闭");
-                return handle_disconnect(app_handle, state, "重连前").await;
+                return handle_disconnect(
+                    app_handle,
+                    previous_connections,
+                    state,
+                    "重连前",
+                    disconnect_message_from_close_frame(frame.as_ref()),
+                )
+                .await;
             }
             Some(Ok(_)) => {}
             Some(Err(error)) => {
                 warn!("collector WebSocket 读取失败: {error}");
-                return handle_disconnect(app_handle, state, "读取失败后").await;
+                return handle_disconnect(
+                    app_handle,
+                    previous_connections,
+                    state,
+                    "读取失败后",
+                    Some(format!("collector websocket read failed: {error}")),
+                )
+                .await;
             }
             None => {
                 warn!("collector WebSocket 已断开");
-                return handle_disconnect(app_handle, state, "断开后").await;
+                return handle_disconnect(
+                    app_handle,
+                    previous_connections,
+                    state,
+                    "断开后",
+                    Some("collector websocket disconnected without close frame".to_string()),
+                )
+                .await;
             }
         }
     }
@@ -528,14 +560,160 @@ async fn collect_stream<R: Runtime>(
 
 async fn handle_disconnect<R: Runtime>(
     app_handle: &AppHandle<R>,
+    previous_connections: &HashMap<String, ConnectionRecord>,
     state: &mut PendingFlushState,
     reason: &str,
+    disconnect_message: Option<String>,
 ) -> ConnectionLoopControl {
     app_handle.state::<RealtimeStore>().clear_active().await;
     if let Err(error) = flush_pending_state(app_handle, state).await {
         warn!("collector {reason} flush 失败: {error}");
     }
+    if let Some(message) = disconnect_message.as_deref() {
+        record_disconnect_errors(app_handle, previous_connections, message).await;
+    }
     ConnectionLoopControl::Reconnect
+}
+
+fn disconnect_message_from_close_frame(frame: Option<&CloseFrame>) -> Option<String> {
+    match frame {
+        Some(frame) if is_expected_close_code(frame.code) => None,
+        Some(frame) if !frame.reason.trim().is_empty() => Some(format!(
+            "collector websocket closed: code={}, reason={}",
+            frame.code, frame.reason
+        )),
+        Some(frame) => Some(format!("collector websocket closed: code={}", frame.code)),
+        None => Some("collector websocket closed without close frame".to_string()),
+    }
+}
+
+fn classify_error(message: &str) -> &'static str {
+    let normalized = message.to_ascii_lowercase();
+
+    if normalized.contains("timeout")
+        || normalized.contains("timed out")
+        || normalized.contains("deadline exceeded")
+        || normalized.contains("i/o timeout")
+    {
+        "timeout"
+    } else if normalized.contains("dns")
+        || normalized.contains("resolve")
+        || normalized.contains("resolved")
+        || normalized.contains("lookup")
+        || normalized.contains("no such host")
+        || normalized.contains("name or service not known")
+    {
+        "dns"
+    } else if normalized.contains("tls")
+        || normalized.contains("ssl")
+        || normalized.contains("certificate")
+        || normalized.contains("handshake")
+        || normalized.contains("x509")
+    {
+        "tls"
+    } else if normalized.contains("refused")
+        || normalized.contains("reset")
+        || normalized.contains("broken pipe")
+        || normalized.contains("network is unreachable")
+        || normalized.contains("connection aborted")
+        || normalized.contains("unexpected eof")
+    {
+        "connection"
+    } else {
+        "other"
+    }
+}
+
+fn is_expected_close_code(code: CloseCode) -> bool {
+    matches!(
+        code,
+        CloseCode::Normal | CloseCode::Away | CloseCode::Restart
+    )
+}
+
+fn normalize_optional_text(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn extract_proxy_node(proxy_chain: &str) -> Option<String> {
+    serde_json::from_str::<Vec<String>>(proxy_chain)
+        .ok()
+        .and_then(|entries| {
+            entries
+                .into_iter()
+                .rev()
+                .find_map(|entry| normalize_optional_text(&entry))
+        })
+        .or_else(|| normalize_optional_text(proxy_chain))
+}
+
+fn build_disconnect_error_logs(
+    previous_connections: &HashMap<String, ConnectionRecord>,
+    message: &str,
+) -> Vec<ErrorLogInsert> {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    let category = classify_error(trimmed).to_string();
+    if previous_connections.is_empty() {
+        return vec![ErrorLogInsert {
+            category,
+            proxy_node: None,
+            host: None,
+            rule: None,
+            message: trimmed.to_string(),
+        }];
+    }
+
+    let mut metadata = BTreeSet::new();
+    for record in previous_connections.values() {
+        metadata.insert((
+            extract_proxy_node(&record.proxy_chain),
+            normalize_optional_text(&record.host),
+            normalize_optional_text(&record.rule),
+        ));
+    }
+
+    metadata
+        .into_iter()
+        .map(|(proxy_node, host, rule)| ErrorLogInsert {
+            category: category.clone(),
+            proxy_node,
+            host,
+            rule,
+            message: trimmed.to_string(),
+        })
+        .collect()
+}
+
+async fn record_disconnect_errors<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    previous_connections: &HashMap<String, ConnectionRecord>,
+    message: &str,
+) {
+    let logs = build_disconnect_error_logs(previous_connections, message);
+    if logs.is_empty() {
+        return;
+    }
+
+    let db = match db::get_db_pool(app_handle).await {
+        Ok(db) => db,
+        Err(error) => {
+            warn!("collector 写入断连错误日志前获取数据库失败: {error}");
+            return;
+        }
+    };
+
+    if let Err(error) = repo_error_log::insert_error_logs_batch(&db, &logs).await {
+        warn!("collector 写入断连错误日志失败: {error}");
+    }
 }
 
 async fn apply_snapshot<R: Runtime>(
@@ -1272,6 +1450,69 @@ mod tests {
         };
 
         assert_eq!(url, "wss://example.com/connections");
+    }
+
+    #[test]
+    fn classify_error_covers_common_disconnect_patterns() {
+        assert_eq!(classify_error("i/o timeout"), "timeout");
+        assert_eq!(classify_error("lookup api.example: no such host"), "dns");
+        assert_eq!(classify_error("tls handshake failure"), "tls");
+        assert_eq!(classify_error("connection reset by peer"), "connection");
+        assert_eq!(classify_error("unexpected websocket close"), "other");
+    }
+
+    #[test]
+    fn disconnect_message_from_close_frame_skips_expected_close_codes() {
+        assert_eq!(
+            disconnect_message_from_close_frame(Some(&CloseFrame {
+                code: CloseCode::Normal,
+                reason: "normal shutdown".into(),
+            })),
+            None
+        );
+        assert_eq!(
+            disconnect_message_from_close_frame(Some(&CloseFrame {
+                code: CloseCode::Away,
+                reason: "server going away".into(),
+            })),
+            None
+        );
+        assert_eq!(
+            disconnect_message_from_close_frame(Some(&CloseFrame {
+                code: CloseCode::Restart,
+                reason: "restart".into(),
+            })),
+            None
+        );
+    }
+
+    #[test]
+    fn build_disconnect_error_logs_uses_active_connection_metadata() {
+        let mut proxy_record = sample_record("proxy", "api.example", 1, 1);
+        proxy_record.rule = "MATCH".into();
+        proxy_record.proxy_chain = "[\"Selector\", \"Proxy-A\"]".into();
+
+        let mut direct_record = sample_record("direct", "dns.example", 1, 1);
+        direct_record.rule = "RULE-SET".into();
+        direct_record.proxy_chain = "[\"DIRECT\"]".into();
+
+        let previous_connections = HashMap::from([
+            ("proxy".to_string(), proxy_record),
+            ("direct".to_string(), direct_record),
+        ]);
+
+        let logs =
+            build_disconnect_error_logs(&previous_connections, "lookup api.example: no such host");
+
+        assert_eq!(logs.len(), 2);
+        assert_eq!(logs[0].category, "dns");
+        assert_eq!(logs[0].message, "lookup api.example: no such host");
+        assert_eq!(logs[0].proxy_node.as_deref(), Some("DIRECT"));
+        assert_eq!(logs[0].host.as_deref(), Some("dns.example"));
+        assert_eq!(logs[0].rule.as_deref(), Some("RULE-SET"));
+        assert_eq!(logs[1].proxy_node.as_deref(), Some("Proxy-A"));
+        assert_eq!(logs[1].host.as_deref(), Some("api.example"));
+        assert_eq!(logs[1].rule.as_deref(), Some("MATCH"));
     }
 
     #[test]
