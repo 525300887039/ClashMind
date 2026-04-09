@@ -452,7 +452,6 @@ fn load_mmdb_reader(path: &Path) -> Option<Reader<Vec<u8>>> {
     }
 }
 
-
 fn is_public_ip(ip_addr: &IpAddr) -> bool {
     match ip_addr {
         IpAddr::V4(ipv4) => is_public_ipv4(ipv4),

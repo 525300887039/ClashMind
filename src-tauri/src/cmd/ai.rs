@@ -1303,7 +1303,9 @@ mod tests {
         assert!(payload.get("apiKey").is_none());
         assert!(payload.get("baseUrl").is_none());
         assert_eq!(
-            payload.get("temperature").and_then(serde_json::Value::as_f64),
+            payload
+                .get("temperature")
+                .and_then(serde_json::Value::as_f64),
             Some(0.3)
         );
         assert_eq!(
@@ -1329,7 +1331,9 @@ mod tests {
         };
 
         assert!(payload.get("context").is_none());
-        let messages = payload.get("messages").and_then(serde_json::Value::as_array);
+        let messages = payload
+            .get("messages")
+            .and_then(serde_json::Value::as_array);
         assert!(messages.is_some());
         let Some(messages) = messages else {
             panic!("messages should be serialized");
