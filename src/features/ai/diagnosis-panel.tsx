@@ -20,7 +20,7 @@ import {
 } from "./hooks/use-diagnosis";
 import { isAiConfigured, useAiSettingsQuery } from "./hooks/use-ai-settings";
 import type { DiagnosisSummary, DiagnosisTimeRangeMinutes } from "@/lib/tauri-api";
-import { cn } from "@/lib/utils";
+import { cn, formatZhDateTime } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 
 const DIAGNOSIS_TIME_RANGE_OPTIONS: Array<{
@@ -53,25 +53,6 @@ function formatPercent(value: number | undefined) {
   }
 
   return `${(value * 100).toFixed(1)}%`;
-}
-
-function formatTimestamp(value: string | undefined) {
-  if (!value) {
-    return "尚未生成";
-  }
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.valueOf())) {
-    return value;
-  }
-
-  return parsed.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
 }
 
 function getTotalErrorCount(summary: DiagnosisSummary | undefined) {
@@ -263,7 +244,7 @@ export function DiagnosisPanel() {
             每分钟自动刷新
           </div>
           <div className="rounded-full border border-border/70 bg-background/80 px-3 py-2 text-xs tracking-[0.16em] text-muted-foreground uppercase">
-            最近更新 {formatTimestamp(summary?.generatedAt)}
+            最近更新 {formatZhDateTime(summary?.generatedAt)}
           </div>
           <div className="rounded-full border border-border/70 bg-background/80 px-3 py-2 text-xs tracking-[0.16em] text-muted-foreground uppercase">
             告警 {alerts.length}
@@ -375,7 +356,7 @@ export function DiagnosisPanel() {
                 AI 诊断报告
               </h3>
               <p className="mt-1 text-sm text-muted-foreground">
-                生成时间 {formatTimestamp(report?.generatedAt)}
+                生成时间 {formatZhDateTime(report?.generatedAt)}
               </p>
             </div>
 

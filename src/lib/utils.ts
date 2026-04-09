@@ -22,3 +22,25 @@ export function formatBytes(bytes: number): string {
 
   return `${Number((safeBytes / base ** unitIndex).toFixed(2))} ${units[unitIndex]}`;
 }
+
+/**
+ * Formats a UTC timestamp string to a short zh-CN locale string (MM/DD HH:mm).
+ * Returns the fallback if the value is missing or unparseable.
+ */
+export function formatZhDateTime(
+  value: string | undefined,
+  fallback = "尚未生成",
+): string {
+  if (!value) return fallback;
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.valueOf())) return value;
+
+  return parsed.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}

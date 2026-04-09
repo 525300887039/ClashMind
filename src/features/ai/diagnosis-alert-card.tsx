@@ -4,7 +4,7 @@ import {
   Info,
   type LucideIcon,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatZhDateTime } from "@/lib/utils";
 import type { AlertSeverity, AnomalyAlert } from "@/lib/tauri-api";
 
 interface SeverityVisualConfig {
@@ -52,21 +52,6 @@ const SEVERITY_CONFIG: Record<AlertSeverity, SeverityVisualConfig> = {
   },
 };
 
-function formatAlertTime(value: string) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.valueOf())) {
-    return value;
-  }
-
-  return parsed.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
 interface DiagnosisAlertCardProps {
   alert: AnomalyAlert;
 }
@@ -111,7 +96,7 @@ export function DiagnosisAlertCard({ alert }: DiagnosisAlertCardProps) {
               {config.label}
             </span>
             <span className="text-xs text-muted-foreground">
-              {formatAlertTime(alert.detectedAt)}
+              {formatZhDateTime(alert.detectedAt, alert.detectedAt)}
             </span>
           </div>
 
