@@ -87,6 +87,34 @@ export interface GeoStat {
   totalTraffic: number;
 }
 
+export interface ErrorCategoryCount {
+  category: string;
+  count: number;
+}
+
+export interface ProxyErrorCount {
+  proxyNode: string;
+  count: number;
+}
+
+export interface HostFailureRate {
+  host: string;
+  failureCount: number;
+  totalCount: number;
+  failureRate: number;
+}
+
+export interface DiagnosisSummary {
+  timeRangeMinutes: number;
+  errorStats: ErrorCategoryCount[];
+  topErrorNodes: ProxyErrorCount[];
+  topFailureHosts: HostFailureRate[];
+  dnsErrorCount: number;
+  matchFallbackCount: number;
+  totalConnections: number;
+  generatedAt: string;
+}
+
 export type AiProviderKind = "openai" | "openai_compatible" | "claude" | "gemini";
 
 export type AiChatRole = "user" | "assistant" | "system";
@@ -388,6 +416,10 @@ export const api = {
     rules: (days: number, limit: number) =>
       invoke<RuleStat[]>("get_rule_stats", { days, limit }),
     geo: (days: number) => invoke<GeoStat[]>("get_geo_stats", { days }),
+  },
+  diagnosis: {
+    getSummary: (timeRangeMinutes?: number) =>
+      invoke<DiagnosisSummary>("get_diagnosis_summary", { timeRangeMinutes }),
   },
   config: {
     read: (path: string) => invoke<string>("read_config", { path }),

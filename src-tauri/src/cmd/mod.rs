@@ -3,6 +3,7 @@ use crate::core::mihomo::MihomoClient;
 pub mod ai;
 pub mod collector;
 pub mod config;
+pub mod diagnosis;
 pub mod proxy;
 pub mod sidecar;
 pub mod stats;
