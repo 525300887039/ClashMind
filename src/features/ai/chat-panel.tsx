@@ -197,13 +197,15 @@ export function ChatPanel() {
         </div>
       </PageHeader>
 
-      {isChatTab ? (
-        <div
-          id="ai-workbench-panel-chat"
-          role="tabpanel"
-          aria-labelledby="ai-workbench-tab-chat"
-          className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1.06fr)_minmax(24rem,0.94fr)]"
-        >
+      <div
+        id="ai-workbench-panel-chat"
+        role="tabpanel"
+        aria-labelledby="ai-workbench-tab-chat"
+        aria-hidden={!isChatTab}
+        hidden={!isChatTab}
+        className="min-h-0 flex-1"
+      >
+        <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[minmax(0,1.06fr)_minmax(24rem,0.94fr)]">
           <div className="flex min-h-0 flex-col overflow-hidden rounded-[2rem] border border-border/70 bg-background/95 shadow-[0_28px_100px_-52px_rgba(15,23,42,0.55)]">
             <div className="flex items-center justify-between border-b border-border/70 px-5 py-4">
               <div>
@@ -311,16 +313,18 @@ export function ChatPanel() {
             </div>
           </aside>
         </div>
-      ) : (
-        <div
-          id="ai-workbench-panel-diagnosis"
-          role="tabpanel"
-          aria-labelledby="ai-workbench-tab-diagnosis"
-          className="min-h-0 flex flex-1"
-        >
-          <DiagnosisPanel />
-        </div>
-      )}
+      </div>
+
+      <div
+        id="ai-workbench-panel-diagnosis"
+        role="tabpanel"
+        aria-labelledby="ai-workbench-tab-diagnosis"
+        aria-hidden={isChatTab}
+        hidden={isChatTab}
+        className="min-h-0 flex-1"
+      >
+        <DiagnosisPanel />
+      </div>
     </motion.section>
   );
 }
