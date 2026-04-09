@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeSet, HashMap},
-    time::Duration,
-};
+use std::{collections::HashMap, time::Duration};
 
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
@@ -631,29 +628,8 @@ fn is_expected_close_code(code: CloseCode) -> bool {
     )
 }
 
-fn normalize_optional_text(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-fn extract_proxy_node(proxy_chain: &str) -> Option<String> {
-    serde_json::from_str::<Vec<String>>(proxy_chain)
-        .ok()
-        .and_then(|entries| {
-            entries
-                .into_iter()
-                .rev()
-                .find_map(|entry| normalize_optional_text(&entry))
-        })
-        .or_else(|| normalize_optional_text(proxy_chain))
-}
-
 fn build_disconnect_error_logs(
-    previous_connections: &HashMap<String, ConnectionRecord>,
+    _previous_connections: &HashMap<String, ConnectionRecord>,
     message: &str,
 ) -> Vec<ErrorLogInsert> {
     let trimmed = message.trim();
@@ -661,36 +637,13 @@ fn build_disconnect_error_logs(
         return Vec::new();
     }
 
-    let category = classify_error(trimmed).to_string();
-    if previous_connections.is_empty() {
-        return vec![ErrorLogInsert {
-            category,
-            proxy_node: None,
-            host: None,
-            rule: None,
-            message: trimmed.to_string(),
-        }];
-    }
-
-    let mut metadata = BTreeSet::new();
-    for record in previous_connections.values() {
-        metadata.insert((
-            extract_proxy_node(&record.proxy_chain),
-            normalize_optional_text(&record.host),
-            normalize_optional_text(&record.rule),
-        ));
-    }
-
-    metadata
-        .into_iter()
-        .map(|(proxy_node, host, rule)| ErrorLogInsert {
-            category: category.clone(),
-            proxy_node,
-            host,
-            rule,
-            message: trimmed.to_string(),
-        })
-        .collect()
+    vec![ErrorLogInsert {
+        category: classify_error(trimmed).to_string(),
+        proxy_node: None,
+        host: None,
+        rule: None,
+        message: trimmed.to_string(),
+    }]
 }
 
 async fn record_disconnect_errors<R: Runtime>(
@@ -1487,7 +1440,7 @@ mod tests {
     }
 
     #[test]
-    fn build_disconnect_error_logs_uses_active_connection_metadata() {
+    fn build_disconnect_error_logs_records_collector_level_failure() {
         let mut proxy_record = sample_record("proxy", "api.example", 1, 1);
         proxy_record.rule = "MATCH".into();
         proxy_record.proxy_chain = "[\"Selector\", \"Proxy-A\"]".into();
@@ -1504,15 +1457,12 @@ mod tests {
         let logs =
             build_disconnect_error_logs(&previous_connections, "lookup api.example: no such host");
 
-        assert_eq!(logs.len(), 2);
+        assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].category, "dns");
         assert_eq!(logs[0].message, "lookup api.example: no such host");
-        assert_eq!(logs[0].proxy_node.as_deref(), Some("DIRECT"));
-        assert_eq!(logs[0].host.as_deref(), Some("dns.example"));
-        assert_eq!(logs[0].rule.as_deref(), Some("RULE-SET"));
-        assert_eq!(logs[1].proxy_node.as_deref(), Some("Proxy-A"));
-        assert_eq!(logs[1].host.as_deref(), Some("api.example"));
-        assert_eq!(logs[1].rule.as_deref(), Some("MATCH"));
+        assert_eq!(logs[0].proxy_node, None);
+        assert_eq!(logs[0].host, None);
+        assert_eq!(logs[0].rule, None);
     }
 
     #[test]
