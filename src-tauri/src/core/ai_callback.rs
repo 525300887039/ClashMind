@@ -287,6 +287,24 @@ fn filter_group_health_scores(
         .collect()
 }
 
+fn group_health_scores_need_warmup(
+    group_nodes: &[String],
+    health_scores: &[node_health::NodeHealthScore],
+) -> bool {
+    if group_nodes.is_empty() {
+        return false;
+    }
+
+    let scored_nodes = health_scores
+        .iter()
+        .map(|score| score.node_name.as_str())
+        .collect::<BTreeSet<_>>();
+
+    group_nodes
+        .iter()
+        .any(|node_name| !scored_nodes.contains(node_name.as_str()))
+}
+
 async fn load_group_health_scores(
     app: &AppHandle,
     group_nodes: &[String],
@@ -699,7 +717,7 @@ pub async fn handle_callback(
             let current_node = resolve_current_node(group_info);
             let mut health_scores = load_group_health_scores(app, &group_nodes, hours).await?;
 
-            if health_scores.is_empty() && !group_nodes.is_empty() {
+            if group_health_scores_need_warmup(&group_nodes, &health_scores) {
                 if let Err(error) = proxy::run_group_delay_test_and_record(
                     app,
                     &params.group,
@@ -869,6 +887,61 @@ mod tests {
 
         let filtered =
             filter_group_health_scores(scores, &["Proxy-B".to_string(), "Proxy-A".to_string()]);
+
+    #[test]
+    fn group_health_scores_need_warmup_when_any_group_member_is_missing() {
+        let scores = vec![node_health::NodeHealthScore {
+            node_name: "Proxy-A".to_string(),
+            score: 92.0,
+            grade: node_health::HealthGrade::Excellent,
+            success_rate: 0.99,
+            avg_delay_ms: Some(80.0),
+            total_tests: 20,
+            evaluated_at: "2026-04-09T00:00:00Z".to_string(),
+        }];
+
+        assert!(group_health_scores_need_warmup(
+            &["Proxy-A".to_string(), "Proxy-B".to_string()],
+            &scores
+        ));
+    }
+
+    #[test]
+    fn group_health_scores_need_warmup_when_group_is_unmeasured() {
+        assert!(group_health_scores_need_warmup(
+            &["Proxy-A".to_string()],
+            &[]
+        ));
+    }
+
+    #[test]
+    fn group_health_scores_do_not_need_warmup_when_all_group_members_are_scored() {
+        let scores = vec![
+            node_health::NodeHealthScore {
+                node_name: "Proxy-A".to_string(),
+                score: 92.0,
+                grade: node_health::HealthGrade::Excellent,
+                success_rate: 0.99,
+                avg_delay_ms: Some(80.0),
+                total_tests: 20,
+                evaluated_at: "2026-04-09T00:00:00Z".to_string(),
+            },
+            node_health::NodeHealthScore {
+                node_name: "Proxy-B".to_string(),
+                score: 75.0,
+                grade: node_health::HealthGrade::Good,
+                success_rate: 0.95,
+                avg_delay_ms: Some(180.0),
+                total_tests: 20,
+                evaluated_at: "2026-04-09T00:00:00Z".to_string(),
+            },
+        ];
+
+        assert!(!group_health_scores_need_warmup(
+            &["Proxy-A".to_string(), "Proxy-B".to_string()],
+            &scores
+        ));
+    }
         let filtered_names = filtered
             .iter()
             .map(|score| score.node_name.as_str())
