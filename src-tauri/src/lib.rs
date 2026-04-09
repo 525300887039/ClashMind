@@ -5,13 +5,22 @@ mod db;
 mod tray;
 mod utils;
 
-use std::{future::Future, sync::Mutex};
+use std::{
+    future::Future,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use tauri::Manager;
+use tokio::time::{self, Instant as TokioInstant, MissedTickBehavior};
 
 use cmd::MihomoState;
 use collector::{CollectorError, CollectorShutdown, CollectorState, RealtimeStore};
-use core::sidecar::{AiSidecarState, SidecarState};
+use core::{
+    anomaly::AlertSeverity,
+    notification::{self, NotificationManagerState},
+    sidecar::{AiSidecarState, SidecarState},
+};
 use utils::geoip::{
     default_mihomo_config_dir, resolve_country_mmdb_path, GeoIpConfigState, GeoIpLookup,
 };
@@ -22,6 +31,92 @@ fn block_on<F: Future>(future: F) -> F::Output {
     } else {
         tauri::async_runtime::block_on(future)
     }
+}
+
+fn start_anomaly_scan_task(app: tauri::AppHandle) {
+    tokio::spawn(async move {
+        let notification_state = {
+            let state = app.state::<NotificationManagerState>();
+            Arc::clone(state.inner())
+        };
+        let mut settings_rx = {
+            let manager = notification_state.lock().await;
+            manager.subscribe()
+        };
+        let mut current_settings = settings_rx.borrow().clone();
+        let mut interval = build_anomaly_scan_interval(current_settings.scan_interval_secs);
+
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    if !current_settings.enabled {
+                        continue;
+                    }
+
+                    let alerts = match cmd::diagnosis::generate_anomaly_alerts(
+                        &app,
+                        cmd::diagnosis::DEFAULT_DIAGNOSIS_WINDOW_MINUTES,
+                    )
+                    .await
+                    {
+                        Ok(alerts) => alerts,
+                        Err(error) => {
+                            tracing::warn!("定时异常扫描失败: {error}");
+                            continue;
+                        }
+                    };
+
+                    if alerts.is_empty() {
+                        continue;
+                    }
+
+                    let notifiable_alerts = {
+                        let manager = notification_state.lock().await;
+                        notification::filter_notifiable_alerts(&manager, &alerts)
+                    };
+
+                    if notifiable_alerts.is_empty() {
+                        continue;
+                    }
+
+                    for alert in notifiable_alerts {
+                        let title = match alert.severity {
+                            AlertSeverity::Critical => "严重告警",
+                            AlertSeverity::Warning => "异常警告",
+                            AlertSeverity::Info => "异常提示",
+                        };
+
+                        if let Err(error) =
+                            notification::send_desktop_notification(&app, title, &alert.title)
+                        {
+                            tracing::warn!("发送桌面通知失败: {error}");
+                            continue;
+                        }
+
+                        let mut manager = notification_state.lock().await;
+                        manager.mark_notified(notification::alert_type_key(&alert.alert_type));
+                    }
+                }
+                changed = settings_rx.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+
+                    current_settings = settings_rx.borrow().clone();
+                    interval = build_anomaly_scan_interval(current_settings.scan_interval_secs);
+                }
+            }
+        }
+    });
+}
+
+fn build_anomaly_scan_interval(scan_interval_secs: u64) -> time::Interval {
+    let mut interval = time::interval_at(
+        TokioInstant::now() + Duration::from_secs(scan_interval_secs),
+        Duration::from_secs(scan_interval_secs),
+    );
+    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    interval
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -55,6 +150,7 @@ pub fn run() {
         })
         .manage(CollectorState::default())
         .manage(RealtimeStore::default())
+        .manage(notification::create_notification_manager_state())
         .invoke_handler(tauri::generate_handler![
             cmd::ai::start_ai_service,
             cmd::ai::stop_ai_service,
@@ -106,6 +202,9 @@ pub fn run() {
             cmd::diagnosis::get_diagnosis_overview,
             cmd::diagnosis::get_node_health,
             cmd::diagnosis::record_delay_test,
+            cmd::diagnosis::get_notification_settings,
+            cmd::diagnosis::update_notification_settings,
+            cmd::diagnosis::trigger_anomaly_scan,
             cmd::stats::get_domain_stats,
             cmd::stats::get_traffic_hourly,
             cmd::stats::get_traffic_daily,
@@ -120,6 +219,21 @@ pub fn run() {
             tray::create_tray(app.handle())?;
             collector::start_aggregation_task(app.handle().clone());
             collector::start_cleanup_task(app.handle().clone());
+
+            let app_handle = app.handle().clone();
+            let notification_settings =
+                block_on(notification::load_notification_settings(&app_handle));
+            let notification_state = {
+                let state = app_handle.state::<NotificationManagerState>();
+                Arc::clone(state.inner())
+            };
+
+            block_on(async {
+                let mut manager = notification_state.lock().await;
+                manager.update_settings(notification_settings);
+            });
+
+            start_anomaly_scan_task(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())
