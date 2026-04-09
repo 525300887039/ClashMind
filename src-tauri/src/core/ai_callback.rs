@@ -238,9 +238,9 @@ fn extract_selected_groups(proxies: &serde_json::Value) -> Vec<SelectedProxyGrou
 }
 
 fn parse_proxy_map(
-    proxies: &serde_json::Value,
+    proxies: serde_json::Value,
 ) -> Result<HashMap<String, RuntimeProxyGroupEntry>, AiSidecarError> {
-    serde_json::from_value::<ProxyMapResponse>(proxies.clone())
+    serde_json::from_value::<ProxyMapResponse>(proxies)
         .map(|response| response.proxies)
         .map_err(|error| invalid_callback(format!("解析代理组信息失败: {error}")))
 }
@@ -433,6 +433,25 @@ where
 
 async fn read_runtime_config(app: &AppHandle) -> Result<serde_json::Value, AiSidecarError> {
     with_mihomo_client(app, |client| Box::pin(client.get_configs())).await
+}
+
+async fn run_diagnosis_core(
+    app: &AppHandle,
+    params: serde_json::Value,
+) -> Result<(diagnosis::DiagnosisSummary, Vec<anomaly::AnomalyAlert>), AiSidecarError> {
+    let params = parse_params::<DiagnosisParams>(params)?;
+    let time_range_minutes =
+        bounded_i32(params.time_range_minutes, 30, 5, 1_440, "timeRangeMinutes")?;
+    let db_pool = db::get_db_pool(app)
+        .await
+        .map_err(|error| invalid_callback(error.to_string()))?;
+    let summary = diagnosis::generate_diagnosis_summary(&db_pool, time_range_minutes)
+        .await
+        .map_err(|error| invalid_callback(error.to_string()))?;
+    let alerts = anomaly::detect_anomalies(&db_pool, &summary, &AnomalyThresholds::default())
+        .await
+        .map_err(|error| invalid_callback(error.to_string()))?;
+    Ok((summary, alerts))
 }
 
 pub async fn handle_callback(
@@ -709,7 +728,7 @@ pub async fn handle_callback(
             let params = parse_params::<OptimizationParams>(request.params)?;
             let hours = bounded_i32(params.hours, 24, 1, 168, "hours")?;
             let proxies = with_mihomo_client(app, |client| Box::pin(client.get_proxies())).await?;
-            let proxy_map = parse_proxy_map(&proxies)?;
+            let proxy_map = parse_proxy_map(proxies)?;
             let group_info = proxy_map.get(&params.group);
             let group_nodes = group_info
                 .map(|entry| normalize_group_nodes(&entry.all))
@@ -744,37 +763,11 @@ pub async fn handle_callback(
             .map_err(|error| invalid_callback(error.to_string()))
         }
         "detect_anomalies" => {
-            let params = parse_params::<DiagnosisParams>(request.params)?;
-            let time_range_minutes =
-                bounded_i32(params.time_range_minutes, 30, 5, 1_440, "timeRangeMinutes")?;
-            let db_pool = db::get_db_pool(app)
-                .await
-                .map_err(|error| invalid_callback(error.to_string()))?;
-            let summary = diagnosis::generate_diagnosis_summary(&db_pool, time_range_minutes)
-                .await
-                .map_err(|error| invalid_callback(error.to_string()))?;
-            let alerts =
-                anomaly::detect_anomalies(&db_pool, &summary, &AnomalyThresholds::default())
-                    .await
-                    .map_err(|error| invalid_callback(error.to_string()))?;
-
+            let (_, alerts) = run_diagnosis_core(app, request.params).await?;
             serde_json::to_value(alerts).map_err(|error| invalid_callback(error.to_string()))
         }
         "run_full_diagnosis" => {
-            let params = parse_params::<DiagnosisParams>(request.params)?;
-            let time_range_minutes =
-                bounded_i32(params.time_range_minutes, 30, 5, 1_440, "timeRangeMinutes")?;
-            let db_pool = db::get_db_pool(app)
-                .await
-                .map_err(|error| invalid_callback(error.to_string()))?;
-            let summary = diagnosis::generate_diagnosis_summary(&db_pool, time_range_minutes)
-                .await
-                .map_err(|error| invalid_callback(error.to_string()))?;
-            let alerts =
-                anomaly::detect_anomalies(&db_pool, &summary, &AnomalyThresholds::default())
-                    .await
-                    .map_err(|error| invalid_callback(error.to_string()))?;
-
+            let (summary, alerts) = run_diagnosis_core(app, request.params).await?;
             Ok(serde_json::json!({
                 "summary": summary,
                 "alerts": alerts,
@@ -887,6 +880,13 @@ mod tests {
 
         let filtered =
             filter_group_health_scores(scores, &["Proxy-B".to_string(), "Proxy-A".to_string()]);
+        let filtered_names = filtered
+            .iter()
+            .map(|score| score.node_name.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(filtered_names, vec!["Proxy-A", "Proxy-B"]);
+    }
 
     #[test]
     fn group_health_scores_need_warmup_when_any_group_member_is_missing() {
@@ -941,12 +941,5 @@ mod tests {
             &["Proxy-A".to_string(), "Proxy-B".to_string()],
             &scores
         ));
-    }
-        let filtered_names = filtered
-            .iter()
-            .map(|score| score.node_name.as_str())
-            .collect::<Vec<_>>();
-
-        assert_eq!(filtered_names, vec!["Proxy-A", "Proxy-B"]);
     }
 }

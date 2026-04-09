@@ -35,11 +35,8 @@ pub(crate) async fn generate_anomaly_alerts(
     app_handle: &AppHandle,
     time_range_minutes: i32,
 ) -> Result<Vec<AnomalyAlert>, DiagnosisError> {
-    let db = db::get_db_pool(app_handle).await?;
-    let summary = diagnosis::generate_diagnosis_summary(&db, time_range_minutes).await?;
-    anomaly::detect_anomalies(&db, &summary, &AnomalyThresholds::default())
-        .await
-        .map_err(DiagnosisError::from)
+    let overview = generate_diagnosis_overview(app_handle, time_range_minutes).await?;
+    Ok(overview.alerts)
 }
 
 async fn generate_node_health_scores(
