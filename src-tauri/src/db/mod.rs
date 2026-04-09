@@ -71,3 +71,25 @@ macro_rules! try_col {
 }
 
 pub(crate) use try_col;
+
+/// Shared validation: ensures a positive i32 and converts to i64.
+pub(crate) fn validate_positive_i32(value: i32, label: &str) -> Result<i64, DbError> {
+    if value <= 0 {
+        return Err(DbError::InvalidTimeWindow(format!(
+            "{label} 必须大于 0"
+        )));
+    }
+
+    Ok(i64::from(value))
+}
+
+/// Shared retention modifier for cleanup queries.
+pub(crate) fn retention_modifier(retain_days: i32) -> Result<String, DbError> {
+    if retain_days < 0 {
+        return Err(DbError::InvalidTimeWindow(
+            "retain_days 不能为负数".to_string(),
+        ));
+    }
+
+    Ok(format!("-{retain_days} days"))
+}

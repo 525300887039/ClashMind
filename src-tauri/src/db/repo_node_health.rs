@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, Sqlite, Transaction};
 use tauri_plugin_sql::DbPool;
 
-use super::{sqlite_pool, try_col, DbError};
+use super::{retention_modifier, sqlite_pool, try_col, validate_positive_i32, DbError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -402,21 +402,7 @@ fn normalize_delay_ms(delay_ms: Option<i32>) -> Result<Option<i32>, DbError> {
 }
 
 fn validate_hours(hours: i32) -> Result<i64, DbError> {
-    if hours <= 0 {
-        return Err(DbError::InvalidTimeWindow("hours 必须大于 0".to_string()));
-    }
-
-    Ok(i64::from(hours))
-}
-
-fn retention_modifier(retain_days: i32) -> Result<String, DbError> {
-    if retain_days < 0 {
-        return Err(DbError::InvalidTimeWindow(
-            "retain_days 不能为负数".to_string(),
-        ));
-    }
-
-    Ok(format!("-{retain_days} days"))
+    validate_positive_i32(hours, "hours")
 }
 
 fn optional_i32_from_row(

@@ -4,7 +4,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tauri_plugin_sql::DbPool;
 
-use super::{repo_error_log, repo_node_health, sqlite_pool, DbError};
+use super::{repo_error_log, repo_node_health, retention_modifier, sqlite_pool, DbError};
 use crate::utils::time as time_utils;
 
 // Connection-backed stats expose a 30-day window in the UI, so raw rows must outlive that range.
@@ -144,15 +144,6 @@ async fn execute_cleanup(
         .map_err(|error| DbError::WriteFailed(format!("{operation}结果溢出: {error}")))
 }
 
-fn retention_modifier(retention_days: i32) -> Result<String, DbError> {
-    if retention_days < 0 {
-        return Err(DbError::InvalidTimeWindow(
-            "retention_days 不能为负数".to_string(),
-        ));
-    }
-
-    Ok(format!("-{retention_days} days"))
-}
 
 #[cfg(test)]
 mod tests {
